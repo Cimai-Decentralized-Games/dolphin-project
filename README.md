@@ -48,7 +48,7 @@ Here's a refined plan, emphasizing the use of `PyO3` for a new project (let's ca
     *   Write Python code to traverse the AST, perform semantic analysis (type checking, etc.), and generate intermediate representation (IR).
 
 2.  **Rust Core (Using PyO3):**
-    *   Use Rust and `PyO3` to create the core of the Coral compiler.
+    *   Use Rust and `PyO3` to create the core of the Dolphin compiler.
     *   The Rust code will:
         *   Embed the Python front-end.
         *   Call the Python front-end to process the Python source code.
@@ -227,34 +227,44 @@ Here are the key takeaways for implementing magic methods in "Coral":
 *   **`PyResult<T>` for Potential Errors:** Use `PyResult<T>` as the return type if the magic method can potentially raise a Python exception.
 *   **Garbage Collection (`__traverse__`, `__clear__`):** If your class owns references to other Python objects, you must implement these methods to properly integrate with Python's garbage collector and prevent memory leaks.
 
-Let's explore how we can use these magic methods in "Coral" to create Python classes that represent Solana concepts.
+Let's explore how we can use these magic methods in "Dolphin" to create Python classes that represent Solana concepts.
 
 **Example: Implementing a Custom Account Class with Magic Methods**
 
 ```rust
 use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
+use std::hash::Hash;
+use pyo3::class::basic::CompareOp;
+use pyo3::types::PyModule;
+use pyo3::{PyAny, Python, PyResult};
+
+fn wrap_u64(obj: &Bound<'_, PyAny>) -> PyResult<u64> {
+    let val = obj.call_method1("__and__", (0xFFFFFFFFFFFFFFFF_u64,))?;
+    let val: u64 = val.extract()?;
+    Ok(val)
+}
 
 #[pyclass]
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct Account {
     #[pyo3(get, set)]
     lamports: u64,
     #[pyo3(get, set)]
     data: Vec<u8>,
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     owner: String, // Let's assume this is a string for simplicity
 }
 
 #[pymethods]
 impl Account {
     #[new]
-    fn new(lamports: u64, data: Vec<u8>, owner: String) -> Self {
+    fn new(#[pyo3(from_py_with = "wrap_u64")] lamports: u64, data: Vec<u8>, owner: String) -> Self {
         Account { lamports, data, owner }
     }
 
     fn __repr__(&self) -> String {
-        format!("Account(lamports={}, data={:?}, owner={})", self.lamports, self.data, self.owner)
+        format!("Account(lamports={}, data_len={}, owner={})", self.lamports, self.data.len(), self.owner)
     }
 
     fn __len__(&self) -> usize {
@@ -263,6 +273,17 @@ impl Account {
 
     fn __bool__(&self) -> bool {
         self.lamports > 0
+    }
+
+    fn __richcmp__(&self, other: &Self, op: CompareOp) -> bool {
+        match op {
+            CompareOp::Lt => self.lamports < other.lamports,
+            CompareOp::Le => self.lamports <= other.lamports,
+            CompareOp::Eq => self == other,
+            CompareOp::Ne => self != other,
+            CompareOp::Gt => self.lamports > other.lamports,
+            CompareOp::Ge => self.lamports >= other.lamports,
+        }
     }
 
     fn update_data(&mut self, new_data: Vec<u8>) -> PyResult<()> {
@@ -304,37 +325,77 @@ You've now gone through a comprehensive overview of customizing Python classes u
 *   **Comparisons (`__richcmp__`, `__eq__`, `__lt__`, etc.):** Implement comparison operators to define how your objects are compared. Use `__richcmp__` for a single method that handles all comparisons, or implement individual methods for each operator.
 *   **Truthiness (`__bool__`):** Determine the "truthiness" of your objects (whether they evaluate to `True` or `False` in a boolean context).
 
-Let's apply these customizations to our `Account` class in "Coral" to make it more Pythonic.
+Let's apply these customizations to our `Account` class in "Dolphin" to make it more Pythonic.
 
 **Enhanced Account Class with Customizations**
 
 ```rust
 use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use pyo3::class::basic::CompareOp;
+use pyo3::types::PyModule;
+use pyo3::{PyAny, Python, PyResult, Py};
+use reqwest;
+use serde_json::Value;
 
-#[pyclass(frozen, eq, hash)]
+
+
+// Helper function for u64 handling
+fn wrap_u64(obj: &Bound<'_, PyAny>) -> PyResult<u64> {
+    let val = obj.call_method1("__and__", (0xFFFFFFFFFFFFFFFF_u64,))?;
+    let val: u64 = val.extract()?;
+    Ok(val)
+}
+
+// Define the Owner class
+#[pyclass]
 #[derive(Clone, PartialEq, Eq, Hash)]
+struct Owner {
+    #[pyo3(get, set)]
+    name: String,
+}
+
+#[pymethods]
+impl Owner {
+    #[new]
+    fn new(name: String) -> Self {
+        Owner { name }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Owner({})", self.name)
+    }
+}
+
+// Define the Account class
+#[pyclass]
+// #[derive(Clone, PartialEq, Eq, Hash)]
 struct Account {
     #[pyo3(get, set)]
     lamports: u64,
     #[pyo3(get, set)]
     data: Vec<u8>,
-    #[pyo3(get)]
-    owner: String, // Let's assume this is a string for simplicity
+    owner: Py<Owner>, // Py<Owner> instead of direct Owner
 }
 
 #[pymethods]
 impl Account {
     #[new]
-    fn new(lamports: u64, data: Vec<u8>, owner: String) -> Self {
+    fn new(
+        #[pyo3(from_py_with = "wrap_u64")] lamports: u64, 
+        data: Vec<u8>, 
+        owner: Py<Owner> // Accept Py<Owner> 
+    ) -> Self {
         Account { lamports, data, owner }
     }
 
-    fn __repr__(&self) -> String {
-        format!("Account(lamports={}, data_len={}, owner={})", self.lamports, self.data.len(), self.owner)
+    fn __repr__(&self, py: Python) -> String {
+        let owner_ref = self.owner.borrow(py); // ✅ Get the reference safely
+        format!(
+            "Account(lamports={}, data_len={}, owner={})",
+            self.lamports, self.data.len(), owner_ref.name
+        )
     }
 
     fn __len__(&self) -> usize {
@@ -349,8 +410,8 @@ impl Account {
         match op {
             CompareOp::Lt => self.lamports < other.lamports,
             CompareOp::Le => self.lamports <= other.lamports,
-            CompareOp::Eq => self == other,
-            CompareOp::Ne => self != other,
+            CompareOp::Eq => self.lamports == other.lamports,
+            CompareOp::Ne => self.lamports != other.lamports,
             CompareOp::Gt => self.lamports > other.lamports,
             CompareOp::Ge => self.lamports >= other.lamports,
         }
@@ -362,6 +423,10 @@ impl Account {
         }
         self.data = new_data;
         Ok(())
+    }
+
+    fn set_owner(&mut self, new_owner: Py<Owner>) {
+        self.owner = new_owner;
     }
 }
 ```
@@ -398,14 +463,15 @@ use pyo3::exceptions::PyValueError;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use pyo3::class::basic::CompareOp;
+use pyo3::types::PyModule;
 
-fn wrap_u64(obj: &Bound<'_, PyAny>) -> PyResult<u64> {
+fn wrap_u64(obj: &PyAny) -> PyResult<u64> {
     let val = obj.call_method1("__and__", (0xFFFFFFFFFFFFFFFF_u64,))?;
     let val: u64 = val.extract()?;
     Ok(val)
 }
 
-#[pyclass(frozen, eq, hash)]
+#[pyclass]
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct Account {
     #[pyo3(get, set)]
@@ -456,7 +522,7 @@ impl Account {
 }
 
 #[pymodule]
-fn dolphin_project(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn dolphin_project(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<Account>()?;
     Ok(())
 }
@@ -485,21 +551,23 @@ crate-type = ["cdylib"]
 pyo3 = { version = "0.18", features = ["extension-module"] }
 
 ```
-Then run `cargo build`
+Then run `maturin develop`
 Finally lets setup the python env so we can run the build
-Create a file in the root directory called requirements.txt
+You will need to install `maturin`
+pyenv activate pyo3
+pip install maturin
 
-```txt
+```
 pyo3
 ```
 
 Now, you can create a virtual environment and install the dependencies:
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate  # On Linux/macOS
-venv\Scripts\activate  # On Windows
-pip install -r requirements.txt
+maturin new -b pyo3 pyo3-dolphin
+cd pyo3-dolphin
+pyenv virtualenv pyo3
+pyenv local pyo3
 ```
 
 Now we can start building the module in python!
@@ -535,6 +603,268 @@ account2 = dolphin_project.Account(lamports=100, data=[1, 2, 3], owner="Alice")
 print(account2 == account)
 ```
 All that should be in the python directory. Finally you can test that
+
+```bash
+cargo build
+python3 python/python_file.py
+```
+This breakdown of Seahorse account types is super helpful for guiding our Dolphin-Project's development.
+
+You can model each of these account types as a Python class in "Dolphin," using `PyO3` to define the classes and their methods. Here's a potential approach:
+
+1.  **`Account` (Base Type):**
+    *   This would be an abstract base class for all other account types.
+    *   It could define common methods like `key()` (to get the account's public key).
+    *   It would likely have abstract properties for `lamports`, `data`, and `owner` (which would be implemented by subclasses).
+
+2.  **`Signer`:**
+    *   This would represent a wallet that signed the transaction.
+    *   It would have a `key()` method to get the signer's public key.
+
+3.  **`Empty`:**
+    *   This would represent an account that will be initialized by the instruction.
+    *   It would have an `init()` method to initialize the account.
+    *   It would have a `bump()` method to get the bump seed (if applicable).
+
+4.  **`UncheckedAccount`:**
+    *   This would represent an account that goes through no checks.
+    *   It would have a `key()` method to get the account's public key.
+
+5.  **`Program`:**
+    *   This would represent an account for invoking CPI calls.
+    *   It would have an `invoke()` method to invoke a CPI call.
+
+6.  **`Clock`:**
+    *   This would represent Solana's `Clock` sysvar.
+    *   It would have methods like `slot()`, `epoch()`, and `unix_timestamp()`.
+
+7.  **Key class:**
+    *   A basic key class that will allow for future derivation.
+
+Now lets update the Lib.rs
+
+```rs
+use pyo3::prelude::*;
+use pyo3::exceptions::PyValueError;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use pyo3::class::basic::CompareOp;
+use pyo3::types::PyModule;
+use pyo3::{PyAny, Python, PyResult};
+
+fn wrap_u64(obj: &PyAny) -> PyResult<u64> {
+    let val = obj.call_method1("__and__", (0xFFFFFFFFFFFFFFFF_u64,))?;
+    let val: u64 = val.extract()?;
+    Ok(val)
+}
+
+#[pyclass]
+#[pyo3(eq, hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct Account {
+    #[pyo3(get, set)]
+    lamports: u64,
+    #[pyo3(get, set)]
+    data: Vec<u8>,
+    #[pyo3(get)]
+    owner: String, // Let's assume this is a string for simplicity
+}
+
+#[pymethods]
+impl Account {
+    #[new]
+    fn new(#[pyo3(from_py_with = "wrap_u64")] lamports: u64, data: Vec<u8>, owner: String) -> Self {
+        Account { lamports, data, owner }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Account(lamports={}, data_len={}, owner={})", self.lamports, self.data.len(), self.owner)
+    }
+
+    fn __len__(&self) -> usize {
+        self.data.len()
+    }
+
+    fn __bool__(&self) -> bool {
+        self.lamports > 0
+    }
+
+    fn __richcmp__(&self, other: &Self, op: CompareOp) -> bool {
+        match op {
+            CompareOp::Lt => self.lamports < other.lamports,
+            CompareOp::Le => self.lamports <= other.lamports,
+            CompareOp::Eq => self == other,
+            CompareOp::Ne => self != other,
+            CompareOp::Gt => self.lamports > other.lamports,
+            CompareOp::Ge => self.lamports >= other.lamports,
+        }
+    }
+
+    fn update_data(&mut self, new_data: Vec<u8>) -> PyResult<()> {
+        if new_data.len() > 1024 {
+            return Err(PyValueError::new_err("Data too large"));
+        }
+        self.data = new_data;
+        Ok(())
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+struct Signer {
+}
+
+#[pymethods]
+impl Signer{
+    #[new]
+    fn new() -> Self{
+        Signer{}
+    }
+    fn key(&self) -> String {
+        "SignerKey".to_string()
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+struct Program{
+}
+
+#[pymethods]
+impl Program{
+    #[new]
+    fn new() -> Self {
+        Program{}
+    }
+
+    fn invoke(&self) -> String{
+        "ProgramInvoked".to_string()
+    }
+
+    fn key(&self) -> String {
+        "ProgramKey".to_string()
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+struct Clock{
+}
+
+#[pymethods]
+impl Clock{
+    #[new]
+    fn new() -> Self{
+        Clock{}
+    }
+
+    fn slot(&self) -> u64{
+        10
+    }
+
+    fn epoch(&self) -> u64{
+        20
+    }
+
+    fn unix_timestamp(&self) -> i64{
+        30
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+struct Key{
+}
+
+#[pymethods]
+impl Key{
+    #[new]
+    fn new() -> Self{
+        Key{}
+    }
+}
+
+#[pyclass]
+struct Empty{
+}
+
+#[pymethods]
+impl Empty{
+    #[new]
+    fn new() -> Self{
+        Empty{}
+    }
+}
+
+
+#[pymodule]
+fn dolphin_project(py: Python<'_>, m: &PyModule) -> PyResult<()> {
+    m.add_class::<Account>()?;
+     m.add_class::<Signer>()?;
+    m.add_class::<Program>()?;
+     m.add_class::<Clock>()?;
+      m.add_class::<Key>()?;
+       m.add_class::<Empty>()?;
+    Ok(())
+}
+```
+Now add to the python
+
+```python
+import dolphin_project
+
+# Create an instance of the Account class
+account = dolphin_project.Account(lamports=100, data=[1, 2, 3], owner="Alice")
+
+# Print the account's representation
+print(account)
+
+# Get the account's length
+print(len(account))
+
+# Check the account's truthiness
+print(bool(account))
+
+# Try updating the account's data
+account.update_data([4, 5, 6])
+print(account)
+
+# Set the account's lamports and owner
+account.lamports = 200
+account.owner = "Bob"
+print(account)
+
+# Compare this with another account
+account2 = dolphin_project.Account(lamports=100, data=[1, 2, 3], owner="Alice")
+
+print(account2 == account)
+
+signer = dolphin_project.Signer()
+
+# Print the Signers Key
+print(signer.key())
+
+pda1 = dolphin_project.Key()
+
+# What is Program
+
+program = dolphin_project.Program()
+
+print(program.key())
+
+print(program.invoke())
+
+# What is the clock
+clock = dolphin_project.Clock()
+
+print(clock.slot())
+
+print(clock.epoch())
+
+print(clock.unix_timestamp())
+```
+
+Lets see what this now does with a cargo build!
 
 ```bash
 cargo build

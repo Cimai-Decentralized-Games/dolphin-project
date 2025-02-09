@@ -1,107 +1,36 @@
 use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use pyo3::class::basic::CompareOp;
-use pyo3::types::PyString;
+use pyo3::types::PyModule;
 use pyo3::{PyAny, Python, PyResult};
 
-fn wrap_u64(obj: &Bound<'_, &PyAny) -> PyResult<u64> {
+fn wrap_u64(obj: &Bound<'_, PyAny>) -> PyResult<u64> {
     let val = obj.call_method1("__and__", (0xFFFFFFFFFFFFFFFF_u64,))?;
     let val: u64 = val.extract()?;
     Ok(val)
-}
-#[pyclass]
-#[derive(Clone, PartialEq, Eq, Hash)]
-struct Owner {
-    name: String,
-}
-
-#[pymethods]
-impl Owner {
-    #[new]
-    fn new(name: String) -> Self {
-        Owner { name }
-    }
-
-    #[getter]
-    fn get_name(&self) -> String {
-        self.name.clone()
-    }
-
-    #[setter]
-    fn set_name(&mut self, name: String) -> PyResult<()> {
-        self.name = name;
-        Ok(())
-    }
-
-    fn __repr__(&self) -> String {
-        format!("Owner({})", self.name)
-    }
 }
 
 #[pyclass]
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct Account {
+    #[pyo3(get, set)]
     lamports: u64,
+    #[pyo3(get, set)]
     data: Vec<u8>,
-    owner: Owner,  // Now using the Owner subclass
+    #[pyo3(get, set)]
+    owner: String, // Let's assume this is a string for simplicity
 }
 
 #[pymethods]
 impl Account {
     #[new]
-    fn new(
-        #[pyo3(from_py_with = "wrap_u64")] lamports: u64,
-        data: Vec<u8>,
-        owner: Owner,  // Accepting an Owner instance
-    ) -> Self {
+    fn new(#[pyo3(from_py_with = "wrap_u64")] lamports: u64, data: Vec<u8>, owner: String) -> Self {
         Account { lamports, data, owner }
     }
 
-    #[getter]
-    fn get_lamports(&self) -> u64 {
-        self.lamports
-    }
-
-    #[setter]
-    fn set_lamports(&mut self, #[pyo3(from_py_with = "wrap_u64")] lamports: u64) -> PyResult<()> {
-        self.lamports = lamports;
-        Ok(())
-    }
-
-    #[getter]
-    fn get_data(&self) -> Vec<u8> {
-        self.data.clone()
-    }
-
-    #[setter]
-    fn set_data(&mut self, data: Vec<u8>) -> PyResult<()> {
-        if data.len() > 1024 {
-            return Err(PyValueError::new_err("Data too large"));
-        }
-        self.data = data;
-        Ok(())
-    }
-
-    #[getter]
-    fn get_owner(&self) -> Owner {
-        self.owner.clone()
-    }
-
-    #[setter]
-    fn set_owner(&mut self, owner: Owner) -> PyResult<()> {
-        self.owner = owner;
-        Ok(())
-    }
-
     fn __repr__(&self) -> String {
-        format!(
-            "Account(lamports={}, data_len={}, owner={})",
-            self.lamports,
-            self.data.len(),
-            self.owner.__repr__()
-        )
+        format!("Account(lamports={}, data_len={}, owner={})", self.lamports, self.data.len(), self.owner)
     }
 
     fn __len__(&self) -> usize {
@@ -131,6 +60,7 @@ impl Account {
         Ok(())
     }
 }
+
 #[pyclass]
 #[derive(Clone)]
 struct Signer {
