@@ -870,3 +870,8 @@ Lets see what this now does with a cargo build!
 cargo build
 python3 python/python_file.py
 ```
+Next Steps for Account Functionality
+Implement different account types (e.g., TokenAccount, OrderBookAccount).
+Write serialization tests to ensure borsh-encoded data can be properly read back.
+Develop utility functions for creating and modifying accounts in Python.
+Integrate with your IR pipeline so that account structures flow from Python to Rust seamlessly.

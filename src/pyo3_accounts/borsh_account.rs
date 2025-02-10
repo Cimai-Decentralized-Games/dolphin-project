@@ -4,8 +4,6 @@ use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
-pub mod pyo3_accounts;
-
 
 #[pyclass]
 #[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
@@ -67,8 +65,9 @@ impl Account {
     }
 }
 
+/// Register the Rust module with Python
 #[pymodule]
-fn dolphin_project(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn dolphin_project(_py: Python,  m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TokenAccount>()?;
     m.add_class::<Account>()?;
     Ok(())
