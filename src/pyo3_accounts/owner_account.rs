@@ -228,7 +228,7 @@ impl Empty {
 
 // Python module definition
 #[pymodule]
-fn dolphin_project(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn dolphin_project_owner_account(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Owner>()?;   // Add Owner class
     m.add_class::<Account>()?;
     m.add_class::<Signer>()?;

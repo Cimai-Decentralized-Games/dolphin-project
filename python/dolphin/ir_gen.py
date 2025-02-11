@@ -1,12 +1,20 @@
-import test_lib_borsch_account
+import dolphin_project.pyo3_accounts.borsh_account as borsh_account
 
 class IRGenerator:
     def __init__(self):
         self.accounts = []
 
     def generate_account(self, mint, owner, amount):
-        token_account = test_lib_borsch_account.TokenAccount(mint, owner, amount)
-        account = test_lib_borsch_account.Account(lamports=5000, owner=owner, token_account=token_account)
+        token_account = borsh_account.TokenAccount(
+            mint=mint, 
+            owner=owner, 
+            amount=amount
+        )
+        account = borsh_account.Account(
+            lamports=5000, 
+            owner=owner, 
+            token_account=token_account
+        )
         self.accounts.append(account)
         return account
 

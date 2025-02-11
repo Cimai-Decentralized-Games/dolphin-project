@@ -150,7 +150,7 @@ impl Empty{
 
 
 #[pymodule]
-fn dolphin_project(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn dolphin_project_account(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Account>()?;
     m.add_class::<Signer>()?;
     m.add_class::<Program>()?;

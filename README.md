@@ -1,7 +1,11 @@
 ## dolphin-project/
 ├── Cargo.toml          # Rust project manifest
-├── src/                # Rust source code
-│   ├── lib.rs          # Core Rust logic (PyO3 bindings, Anchor integration)
+├── src/
+│── lib.rs  (Registers `pyo3_accounts` submodules, Core Rust logic (`PyO3 bindings`, Anchor integration))
+│── pyo3_accounts/
+│   ├── mod.rs  (optional, if you plan to expand)
+│   ├── borsh_account.rs  (Registers `TokenAccount` & `Account`)
+|   |__ owner_account.rs (Registers `OwnerAccount`)
 │   ├── compiler/       # Rust code for compilation stages
 │   │   ├── ir.rs       # Data structures for intermediate representation (IR)
 │   │   ├── codegen.rs  # Rust code generation from IR
@@ -24,14 +28,20 @@
 │
 ├── tests/              # Integration tests
 │   ├── python/         # Python tests for the compiler itself
+│   │   └── test_compiler.py # Still need to make
+|   |   └── python_test_accounts.py  # For the Borsch TokenAccount and Account for Serialization and Deserialization
+|   |   └── python_test_file.py # Need to adjust this to to be the instructions test 
+|   |   └── python_test_owner.py # Need to make this more specific about Accounts and not just Owner
+|   |   └── python_test_cpi_file.py # Need to make
+|   |   └── python_test_transactions.py # Need to make
 │   └── rust/           # Rust tests for core logic
 │
 └── README.md           # Project documentation
 
 
-Okay, let's solidify the new direction. You're right; trying to salvage the existing Seahorse architecture might be more trouble than it's worth. A fresh start with `PyO3` offers a cleaner path forward.
+Okay, let's solidify the new direction.  A fresh start with `PyO3` offers a cleaner path forward.
 
-Here's a refined plan, emphasizing the use of `PyO3` for a new project (let's call it "Dolphin):
+Here's a refined plan, emphasizing the use of `PyO3` for a new project (It's called "Dolphin):
 
 **Dolphin: A Python-to-Solana Framework Using PyO3**
 
@@ -142,15 +152,15 @@ Here are some key takeaways from the documentation that are relevant to the "Dol
 *   **Calling Python Functions from Rust:** You can call Python functions from Rust, allowing you to leverage existing Python libraries and code.
 *   **Rust as the Core:** The plan is for the core logic, especially anything related to Solana and Anchor, to be written in Rust for performance and safety.
 
-Based on this, here's a breakdown of how `PyO3` would fit into the Coral architecture:
+Based on this, here's a breakdown of how `PyO3` would fit into the Dolphin architecture:
 
 1.  **Embedding the Python Front-End:**
-    *   You would use `PyO3` to embed a Python interpreter within the Coral Rust core.
+    *   You would use `PyO3` to embed a Python interpreter within the Dolphin Rust core.
     *   The Python front-end (responsible for parsing, AST manipulation, and IR generation) would be loaded into this embedded interpreter.
 
 2.  **Calling the Python Front-End:**
-    *   From Rust, you would call a specific function within the Python front-end (e.g., `compile_seahorse(source_code: str) -> str`).
-    *   This function would take the Seahorse Python source code as input and return the intermediate representation (IR) as a string (e.g., JSON).
+    *   From Rust, you would call a specific function within the Python front-end (e.g., `compile_dolphin(source_code: str) -> str`).
+    *   This function would take the Dolphin Python source code as input and return the intermediate representation (IR) as a string (e.g., JSON).
 
 3.  **IR Processing and Rust Code Generation:**
     *   The Rust core would then receive the IR string from Python.
@@ -370,7 +380,6 @@ impl Owner {
 
 // Define the Account class
 #[pyclass]
-// #[derive(Clone, PartialEq, Eq, Hash)]
 struct Account {
     #[pyo3(get, set)]
     lamports: u64,
@@ -449,7 +458,7 @@ Here's a summary of the key points:
 *   **Using the Python C API (Unsafe Code):** You learned how to call functions from the Python C API using `pyo3::ffi`, but you also understood the importance of upholding the contracts of these functions and using `unsafe` blocks carefully.
 *   **Wrapping Python Integers:** You learned how to wrap Python integers to avoid overflows, which is particularly important when dealing with Solana's 64-bit integers.
 
-Now, let's enhance our `Account` class in "Coral" to incorporate these concepts. We'll focus on:
+Now, let's enhance our `Account` class in "Dolphin" to incorporate these concepts. We'll focus on:
 
 *   **Safe Integer Handling:** Use custom extraction to ensure that `lamports` is handled safely.
 *   **Implementing Arithmetic Operators (Optional):** If we want to allow arithmetic operations on `Account` objects (e.g., adding lamports), we can implement the corresponding magic methods.
@@ -460,12 +469,12 @@ Here's how we can modify the lib.rs code
 ```rust
 use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use pyo3::class::basic::CompareOp;
 use pyo3::types::PyModule;
+use pyo3::{PyAny, Python, PyResult};
 
-fn wrap_u64(obj: &PyAny) -> PyResult<u64> {
+fn wrap_u64(obj: &Bound<'_, PyAny>) -> PyResult<u64> {
     let val = obj.call_method1("__and__", (0xFFFFFFFFFFFFFFFF_u64,))?;
     let val: u64 = val.extract()?;
     Ok(val)
@@ -478,7 +487,7 @@ struct Account {
     lamports: u64,
     #[pyo3(get, set)]
     data: Vec<u8>,
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     owner: String, // Let's assume this is a string for simplicity
 }
 
@@ -522,7 +531,7 @@ impl Account {
 }
 
 #[pymodule]
-fn dolphin_project(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+fn dolphin_project_account(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Account>()?;
     Ok(())
 }
@@ -605,7 +614,7 @@ print(account2 == account)
 All that should be in the python directory. Finally you can test that
 
 ```bash
-cargo build
+maturin develop
 python3 python/python_file.py
 ```
 This breakdown of Seahorse account types is super helpful for guiding our Dolphin-Project's development.
@@ -646,27 +655,25 @@ Now lets update the Lib.rs
 ```rs
 use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use pyo3::class::basic::CompareOp;
 use pyo3::types::PyModule;
 use pyo3::{PyAny, Python, PyResult};
 
-fn wrap_u64(obj: &PyAny) -> PyResult<u64> {
+fn wrap_u64(obj: &Bound<'_, PyAny>) -> PyResult<u64> {
     let val = obj.call_method1("__and__", (0xFFFFFFFFFFFFFFFF_u64,))?;
     let val: u64 = val.extract()?;
     Ok(val)
 }
 
 #[pyclass]
-#[pyo3(eq, hash)]
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct Account {
     #[pyo3(get, set)]
     lamports: u64,
     #[pyo3(get, set)]
     data: Vec<u8>,
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     owner: String, // Let's assume this is a string for simplicity
 }
 
@@ -798,15 +805,16 @@ impl Empty{
 
 
 #[pymodule]
-fn dolphin_project(py: Python<'_>, m: &PyModule) -> PyResult<()> {
+fn dolphin_project_account(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Account>()?;
-     m.add_class::<Signer>()?;
+    m.add_class::<Signer>()?;
     m.add_class::<Program>()?;
-     m.add_class::<Clock>()?;
-      m.add_class::<Key>()?;
-       m.add_class::<Empty>()?;
+    m.add_class::<Clock>()?;
+    m.add_class::<Key>()?;
+    m.add_class::<Empty>()?;
     Ok(())
 }
+
 ```
 Now add to the python
 
@@ -864,14 +872,85 @@ print(clock.epoch())
 print(clock.unix_timestamp())
 ```
 
-Lets see what this now does with a cargo build!
+Lets see what this now does with maturin develop!
 
 ```bash
-cargo build
+maturin develop
 python3 python/python_file.py
 ```
-Next Steps for Account Functionality
-Implement different account types (e.g., TokenAccount, OrderBookAccount).
-Write serialization tests to ensure borsh-encoded data can be properly read back.
-Develop utility functions for creating and modifying accounts in Python.
-Integrate with your IR pipeline so that account structures flow from Python to Rust seamlessly.
+
+Here's a more detailed breakdown of next steps, with Markdown checkboxes to help you track progress:
+
+**I. Account Data Structures and Serialization**
+
+*   [✅] **Choose a Serialization Library:**  (Already chose `borsh`)
+*   [ ] **Define Core Account Data Structures:**
+    *   [ ] `TokenAccount`:
+        *   [ ] `mint: Pubkey` (Solana address of the token mint)
+        *   [✅] `owner: Pubkey` (Solana address of the account owner)
+        *   [✅] `amount: u64` (Token balance)
+    *   [ ] `OrderBookAccount`: (Example)
+        *   [ ] `market: Pubkey`
+        *   [ ] `bids: Pubkey`
+        *   [ ] `asks: Pubkey`
+        *   [ ] `base_volume: u64`
+        *   [ ] `quote_volume: u64`
+*   [✅] **Implement `borsh` Serialization/Deserialization for all Data Structures:**
+    *   [✅] Use `#[derive(BorshSerialize, BorshDeserialize)]` on your data structures.
+    *   [✅] Add `serialize()` and `deserialize()` methods (as you've already done for `TokenAccount`).
+*   [ ] **Ensure Fixed-Size Account Data (If Possible):**  Aim for fixed-size account data to simplify on-chain operations. If variable-size data is needed, carefully manage packing and unpacking within the `Vec<u8>`.`Token_2022 Extensions will need more`
+
+**II. Expanding Account Functionality (Rust Side)**
+
+*   [ ] **Implement Account Creation:**
+    *   [ ] Add a function to create accounts with the data structures.
+        *   [ ] Accounts will be initialized with a default value.
+*   [ ] **More Methods for Token Account:**
+    *   [ ] deposit
+    *   [ ] withdraw
+    *   [ ] transfer
+*   [ ] **Implement Account Data Validation:**
+    *   [ ] Check valid mint addresses
+    *   [ ] Check valid owner addresses
+    *   [ ] Token amount constraints 
+*   [ ] **Implement Safe Math:**  Use Rust's checked arithmetic methods (`checked_add`, `checked_sub`, etc.) to prevent overflows.
+*   [ ] **Add Unit Tests (Rust Side):**
+    *   [ ] Write unit tests to verify that the account methods are working correctly.
+    *   [ ] Test successful operations and error conditions.
+
+**III. Python-Side Development**
+
+*   [ ] **Create Python Classes for Account Types:**
+    *   [ ] `TokenAccount(RustAccountWrapper)`
+    *   [ ] `OrderBookAccount(RustAccountWrapper)`
+*   [ ] **Implement Pythonic Interface:**
+    *   [ ]  Use properties and methods to provide a Pythonic interface for accessing and manipulating account data.
+*   [ ] **Write Helper Functions:**
+    *   [ ] Create functions to create, read, update, and delete accounts.
+    *   [ ] Provide functions for common account operations.
+*   [ ] **Add Integration Tests (Python Side):**
+    *   [ ] Write integration tests to verify that the Python classes interact correctly with the Rust code.
+    *   [ ] Test the full flow of creating, modifying, and serializing/deserializing accounts.
+
+**IV. Dolphin Compiler Integration**
+
+*   [ ] **Extend Dolphin Language for Account Definitions:**
+    *   [ ] Modify your parser (`python/dolphin/parser.py`) to recognize account definitions.
+    *   [ ] Create AST nodes (`python/dolphin/ast.py`) to represent account definitions.
+*   [ ] **Code Generation (Rust):**
+    *   [ ] Modify your code generator (`src/compiler/codegen.rs`) to generate Rust code for:
+        *   [ ] The account data structures (using `borsh` for serialization).
+        *   [ ] Functions to create, read, update, and delete accounts.
+*   [ ] **IR (Intermediate Representation):**
+    *   [ ] Consider how your IR (`src/compiler/ir.rs`) needs to represent account operations.
+    *   [ ] You might need new IR instructions for loading account data, storing account data, etc.
+*   [ ] **Analyzer:**
+    *   [ ] Update the analyzer (`python/dolphin/analyzer.py`) to perform static analysis on account definitions to catch errors early.
+
+**V. Examples and Documentation**
+
+*   [ ] **Create More Complex Examples:**
+    *   [ ] Demonstrate how to use your account functionality.
+*   [ ] **Write Documentation:**
+    *   [ ] Clearly document your account features.
+

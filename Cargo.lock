@@ -145,6 +145,7 @@ dependencies = [
  "borsh",
  "borsh-derive",
  "pyo3",
+ "pyo3-build-config",
  "reqwest",
  "serde_json",
 ]
