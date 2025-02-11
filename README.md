@@ -1,42 +1,182 @@
-## dolphin-project/
-├── Cargo.toml          # Rust project manifest
-├── src/
-│── lib.rs  (Registers `pyo3_accounts` submodules, Core Rust logic (`PyO3 bindings`, Anchor integration))
-│── pyo3_accounts/
-│   ├── mod.rs  (optional, if you plan to expand)
-│   ├── borsh_account.rs  (Registers `TokenAccount` & `Account`)
-|   |__ owner_account.rs (Registers `OwnerAccount`)
-│   ├── compiler/       # Rust code for compilation stages
-│   │   ├── ir.rs       # Data structures for intermediate representation (IR)
-│   │   ├── codegen.rs  # Rust code generation from IR
-│   │   └── mod.rs      # Module definition
-│   └── utils/          # Helper functions and utilities
-│
-├── python/             # Python front-end
+```markdown
+# Dolphin-Project: Enhanced Roadmap and Checklist
+
+This document outlines the roadmap and checklist for the Dolphin-Project, focusing on Pythonic Solana smart contract development using PyO3.
+
+## I. Project Structure
+
+```
+dolphin-project/
+├── CONTRIBUTING.md         
+├── Cargo.lock                
+├── Cargo.toml                 
+├── Makefile                  
+├── README.md               
+├── build.rs                 
+├── docs/                           # Documentation directory
+│   ├── api_reference.md
+│   ├── examples
+│   └── getting_started.md
+├── examples/                           
+│   ├── README.md
+│   ├── advanced
+│   ├── basic
+│   └── hello_world.dl
+├── pyproject.toml           
+├── python/                 # Python front-end
 │   ├── __init__.py     # Makes python a package
-│   ├── dolphin/
+│   ├── __pycache__/
+│   │   └── __init__.cpython-310.pyc
+│   ├── dolphin/          # Your Dolphin compiler code
 │   │   ├── __init__.py # Makes dolphin a package
-│   │   ├── parser.py       # Python code for parsing Python code
-│   │   ├── analyzer.py     # Python code for semantic analysis (type checking, etc.)
-│   │   ├── ir_gen.py      # Python code to generate IR
-│   │   ├── ast.py       # Python definition of AST (optional)
-│   │   └── prelude.py    # Dolphin-specific Python builtins/helpers
-│   └── examples/       # Example Dolphin programs
-│
-├── examples/           # Examples of using Dolphin (Solana programs written in Dolphin)
-│   └── hello_world.dl   # Dolphin program (custom extension)
-│
-├── tests/              # Integration tests
-│   ├── python/         # Python tests for the compiler itself
-│   │   └── test_compiler.py # Still need to make
-|   |   └── python_test_accounts.py  # For the Borsch TokenAccount and Account for Serialization and Deserialization
-|   |   └── python_test_file.py # Need to adjust this to to be the instructions test 
-|   |   └── python_test_owner.py # Need to make this more specific about Accounts and not just Owner
-|   |   └── python_test_cpi_file.py # Need to make
-|   |   └── python_test_transactions.py # Need to make
-│   └── rust/           # Rust tests for core logic
-│
-└── README.md           # Project documentation
+│   │   ├── core/       # Core Python functionality
+│   │   │   ├── __init__.py
+│   │   │   ├── types.py   # Solana type definitions
+│   │   │   └── decorators.py # Program decorators
+│   │   ├── utils/    # Utility functions
+│   │   └── errors/   # Custom error definitions
+│   ├── examples/      # Python examples
+│   │   ├── __pycache__/
+│   │   └── test_borsch_account.py
+│   └── tests/          # Python-specific tests
+├── requirements-dev.txt   
+├── requirements.txt      
+├── scripts/       
+├── setup.cfg         
+├── setup.py           
+├── src/                # Rust source code
+│   ├── lib.rs          # Main Rust library
+│   ├── compiler/       # Rust compiler code (if any)
+│   │   ├── codegen.rs
+│   │   ├── ir.rs
+│   │   └── mod.rs
+│   ├── pyo3_accounts/   # Rust module for account-related code
+│   │   ├── account.rs
+│   │   ├── borsh_account.rs
+│   │   ├── mod.rs
+│   │   └── owner_account.rs
+│   └── utils/         # Rust Utilities
+│       └── validation.rs
+├── target/              
+│   ├── CACHEDIR.TAG
+│   ├── debug/
+│   │   ├── build
+│   │   ├── deps
+│   │   ├── examples
+│   │   ├── incremental
+│   │   ├── libdolphin_project.d
+│   │   └── libdolphin_project.so
+│   └── tmp/
+├── tests/             
+│   ├── conftest.py
+│   ├── intergration/
+│   │   ├── test_compilation.py
+│   │   └── test_deployment.py
+│   └── unit/
+│   │   ├── python/
+│   │   └── rust/
+└── tox.ini```
+
+## II. Account Functionality Roadmap
+
+### 1. Account Data Structures and Serialization (Rust - `src/pyo3_accounts/`)
+
+*   [ ] Choose a Serialization Library:  **`borsh`** (Already Done)
+*   [ ] Define Core Account Data Structures:
+    *   [ ] `TokenAccount`:
+        *   [ ] `mint: Pubkey` (Solana address of the token mint - `String`)
+        *   [ ] `owner: Pubkey` (Solana address of the account owner - `String`)
+        *   [ ] `amount: u64` (Token balance)
+    *   [ ] `OrderBookAccount`: (Example)
+        *   [ ] `market: Pubkey` (`String`)
+        *   [ ] `bids: Pubkey` (`String`)
+        *   [ ] `asks: Pubkey` (`String`)
+        *   [ ] `base_volume: u64`
+        *   [ ] `quote_volume: u64`
+*   [ ] Implement `borsh` Serialization/Deserialization for all Data Structures:
+    *   [ ] Add `borsh` as a dependency in `Cargo.toml`.
+    *   [ ] Use `#[derive(BorshSerialize, BorshDeserialize)]` on your data structures.
+    *   [ ] Add `serialize()` and `deserialize()` methods.
+*   [ ] Ensure Fixed-Size Account Data (If Possible):
+    *   [ ] Aim for fixed-size account data to simplify on-chain operations. If variable-size data is needed, carefully manage packing and unpacking within the `Vec<u8>`.
+
+### 2. Expanding Account Functionality (Rust Side - `src/pyo3_accounts/`)
+
+*   [ ] Implement Account Creation:
+    *   [ ] Add a function to create accounts with the data structures.
+        *   [ ] Accounts will be initialized with a default value.
+*   [ ] More Methods for `TokenAccount`:
+    *   [ ] `deposit`
+    *   [ ] `withdraw`
+    *   [ ] `transfer`
+*   [ ] Implement Account Data Validation:
+    *   [ ] Check valid mint addresses.
+    *   [ ] Check valid owner addresses.
+    *   [ ] Token amount constraints.
+*   [ ] Implement Safe Math:  Use Rust's checked arithmetic methods (`checked_add`, `checked_sub`, etc.) to prevent overflows.
+*   [ ] Add Unit Tests (Rust Side - `tests/rust/unit/`):
+    *   [ ] Verify that the account methods are working correctly.
+    *   [ ] Test successful operations and error conditions.
+
+### 3. Python-Side Development (python/dolphin/core/)
+
+*   [ ] Core directory creation (python/dolphin/core/)
+*   [ ] Pythonic type definitions (python/dolphin/core/types.py)
+*   [ ] Pythonic program decorators (python/dolphin/core/decorators.py)
+*   [ ] Account Classes
+    *   [ ] `TokenAccount(RustAccountWrapper)`
+    *   [ ] `OrderBookAccount(RustAccountWrapper)`
+*   [ ] Implement Pythonic Interface:
+    *   [ ] Use properties and methods to provide a Pythonic interface for accessing and manipulating account data.
+*   [ ] Write Helper Functions:
+    *   [ ] Create functions to create, read, update, and delete accounts.
+    *   [ ] Provide functions for common account operations.
+*   [ ] Add Integration Tests (Python Side - `tests/python/`):
+    *   [ ] Verify that the Python classes interact correctly with the Rust code.
+    *   [ ] Test the full flow of creating, modifying, and serializing/deserializing accounts.
+
+### 4. Dolphin Compiler Integration (python/dolphin/, src/compiler/)
+
+*   [ ] Extend Dolphin Language for Account Definitions:
+    *   [ ] Modify your parser (`python/dolphin/parser.py`) to recognize account definitions.
+    *   [ ] Create AST nodes (`python/dolphin/ast.py`) to represent account definitions.
+*   [ ] Code Generation (Rust - `src/compiler/codegen.rs`):
+    *   [ ] Generate Rust code for:
+        *   [ ] The account data structures (using `borsh` for serialization).
+        *   [ ] Functions to create, read, update, and delete accounts.
+*   [ ] IR (Intermediate Representation - `src/compiler/ir.rs`):
+    *   [ ] Consider how your IR needs to represent account operations.
+    *   [ ] You might need new IR instructions for loading account data, storing account data, etc.
+*   [ ] Analyzer (python/dolphin/analyzer.py):
+    *   [ ] Update the analyzer to perform static analysis on account definitions to catch errors early.
+
+### 5. Examples and Documentation (examples/, docs/)
+
+*   [ ] Create More Complex Examples:
+    *   [ ] Demonstrate how to use your account functionality in various scenarios.
+*   [ ] Write Documentation:
+    *   [ ] Clearly document your account features.
+
+### 6. Key improvements and features
+
+*   [ ] `types.py`:
+    *   [ ] Base `SolanaAccount` class with essential account properties
+    *   [ ] Specialized `TokenAccount` class matching our Rust implementation
+    *   [ ] Strong type hints and validation
+    *   [ ] Serialization support via `to_dict()`
+    *   [ ] Post-initialization validation
+*   [ ] `decorators.py`:
+    *   [ ] `@program` decorator for defining Solana programs
+    *   [ ] `@account` decorator for account instruction handlers
+    *   [ ] `@instruction` decorator for program instructions
+    *   [ ] Type safety and validation
+*   [ ] `validation.py`:
+    *   [ ] Comprehensive address validation matching Solana standards
+    *   [ ] Support for program IDs and mint addresses
+    *   [ ] PDA derivation helper
+    *   [ ] Base58 encoding/decoding support
+```
+
 
 
 Okay, let's solidify the new direction.  A fresh start with `PyO3` offers a cleaner path forward.
@@ -878,79 +1018,4 @@ Lets see what this now does with maturin develop!
 maturin develop
 python3 python/python_file.py
 ```
-
-Here's a more detailed breakdown of next steps, with Markdown checkboxes to help you track progress:
-
-**I. Account Data Structures and Serialization**
-
-*   [✅] **Choose a Serialization Library:**  (Already chose `borsh`)
-*   [ ] **Define Core Account Data Structures:**
-    *   [ ] `TokenAccount`:
-        *   [ ] `mint: Pubkey` (Solana address of the token mint)
-        *   [✅] `owner: Pubkey` (Solana address of the account owner)
-        *   [✅] `amount: u64` (Token balance)
-    *   [ ] `OrderBookAccount`: (Example)
-        *   [ ] `market: Pubkey`
-        *   [ ] `bids: Pubkey`
-        *   [ ] `asks: Pubkey`
-        *   [ ] `base_volume: u64`
-        *   [ ] `quote_volume: u64`
-*   [✅] **Implement `borsh` Serialization/Deserialization for all Data Structures:**
-    *   [✅] Use `#[derive(BorshSerialize, BorshDeserialize)]` on your data structures.
-    *   [✅] Add `serialize()` and `deserialize()` methods (as you've already done for `TokenAccount`).
-*   [ ] **Ensure Fixed-Size Account Data (If Possible):**  Aim for fixed-size account data to simplify on-chain operations. If variable-size data is needed, carefully manage packing and unpacking within the `Vec<u8>`.`Token_2022 Extensions will need more`
-
-**II. Expanding Account Functionality (Rust Side)**
-
-*   [ ] **Implement Account Creation:**
-    *   [ ] Add a function to create accounts with the data structures.
-        *   [ ] Accounts will be initialized with a default value.
-*   [ ] **More Methods for Token Account:**
-    *   [ ] deposit
-    *   [ ] withdraw
-    *   [ ] transfer
-*   [ ] **Implement Account Data Validation:**
-    *   [ ] Check valid mint addresses
-    *   [ ] Check valid owner addresses
-    *   [ ] Token amount constraints 
-*   [ ] **Implement Safe Math:**  Use Rust's checked arithmetic methods (`checked_add`, `checked_sub`, etc.) to prevent overflows.
-*   [ ] **Add Unit Tests (Rust Side):**
-    *   [ ] Write unit tests to verify that the account methods are working correctly.
-    *   [ ] Test successful operations and error conditions.
-
-**III. Python-Side Development**
-
-*   [ ] **Create Python Classes for Account Types:**
-    *   [ ] `TokenAccount(RustAccountWrapper)`
-    *   [ ] `OrderBookAccount(RustAccountWrapper)`
-*   [ ] **Implement Pythonic Interface:**
-    *   [ ]  Use properties and methods to provide a Pythonic interface for accessing and manipulating account data.
-*   [ ] **Write Helper Functions:**
-    *   [ ] Create functions to create, read, update, and delete accounts.
-    *   [ ] Provide functions for common account operations.
-*   [ ] **Add Integration Tests (Python Side):**
-    *   [ ] Write integration tests to verify that the Python classes interact correctly with the Rust code.
-    *   [ ] Test the full flow of creating, modifying, and serializing/deserializing accounts.
-
-**IV. Dolphin Compiler Integration**
-
-*   [ ] **Extend Dolphin Language for Account Definitions:**
-    *   [ ] Modify your parser (`python/dolphin/parser.py`) to recognize account definitions.
-    *   [ ] Create AST nodes (`python/dolphin/ast.py`) to represent account definitions.
-*   [ ] **Code Generation (Rust):**
-    *   [ ] Modify your code generator (`src/compiler/codegen.rs`) to generate Rust code for:
-        *   [ ] The account data structures (using `borsh` for serialization).
-        *   [ ] Functions to create, read, update, and delete accounts.
-*   [ ] **IR (Intermediate Representation):**
-    *   [ ] Consider how your IR (`src/compiler/ir.rs`) needs to represent account operations.
-    *   [ ] You might need new IR instructions for loading account data, storing account data, etc.
-*   [ ] **Analyzer:**
-    *   [ ] Update the analyzer (`python/dolphin/analyzer.py`) to perform static analysis on account definitions to catch errors early.
-
-**V. Examples and Documentation**
-
-*   [ ] **Create More Complex Examples:**
-    *   [ ] Demonstrate how to use your account functionality.
-*   [ ] **Write Documentation:**
-    *   [ ] Clearly document your account features.
 
