@@ -1,6 +1,35 @@
-from typing import Optional, Any, Dict
+#python/dolphin/core/types.py
+from typing import Optional, Any, Dict, List
 from dataclasses import dataclass
+from enum import Enum
 from ..utils.validation import validate_address
+
+class SolanaType(Enum):
+    """Mapping of Python types to Solana types."""
+    U8 = "u8"
+    U16 = "u16"
+    U32 = "u32"
+    U64 = "u64"
+    I8 = "i8"
+    I16 = "i16"
+    I32 = "i32"
+    I64 = "i64"
+    BOOL = "bool"
+    PUBKEY = "Pubkey"
+    STRING = "String"
+    BYTES = "Vec<u8>"
+
+    @classmethod
+    def from_python_type(cls, py_type: str) -> str:
+        """Convert Python type hint to Solana type."""
+        type_mapping = {
+            "int": cls.U64.value,
+            "str": cls.STRING.value,
+            "bool": cls.BOOL.value,
+            "Pubkey": cls.PUBKEY.value,
+            "bytes": cls.BYTES.value,
+        }
+        return type_mapping.get(py_type, py_type)
 
 @dataclass
 class SolanaAccount:
@@ -71,3 +100,111 @@ class TokenAccount(SolanaAccount):
             "delegate": self.delegate
         })
         return base_dict
+
+@dataclass
+class AccountField:
+    """Represents a field in a Solana account structure."""
+    name: str
+    type_name: str
+    attributes: List[str] = None
+    
+    def __post_init__(self):
+        if self.attributes is None:
+            self.attributes = []
+
+    def to_ir(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "type": SolanaType.from_python_type(self.type_name),
+            "attributes": self.attributes
+        }
+
+@dataclass
+class AccountDefinition:
+    """Definition for a Solana account structure."""
+    name: str
+    fields: List[AccountField]
+    is_pda: bool = False
+    seeds: List[str] = None
+    discriminator: Optional[str] = None
+
+    def __post_init__(self):
+        if self.seeds is None:
+            self.seeds = []
+
+    def add_field(self, name: str, type_name: str, attributes: List[str] = None):
+        field = AccountField(name, type_name, attributes)
+        self.fields.append(field)
+
+    def set_pda(self, seeds: List[str]):
+        self.is_pda = True
+        self.seeds = seeds
+
+    def to_ir(self) -> Dict[str, Any]:
+        return {
+            "type": "account",
+            "name": self.name,
+            "fields": [field.to_ir() for field in self.fields],
+            "is_pda": self.is_pda,
+            "seeds": self.seeds,
+            "discriminator": self.discriminator
+        }
+
+@dataclass
+class InstructionArgument:
+    """Represents an argument in a Solana instruction."""
+    name: str
+    type_name: str
+
+    def to_ir(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "type": SolanaType.from_python_type(self.type_name)
+        }
+
+@dataclass
+class InstructionAccount:
+    """Represents an account used in a Solana instruction."""
+    name: str
+    account_type: str
+    is_mutable: bool = False
+    is_signer: bool = False
+
+    def to_ir(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "type": self.account_type,
+            "is_mutable": self.is_mutable,
+            "is_signer": self.is_signer
+        }
+
+@dataclass
+class InstructionDefinition:
+    """Definition for a Solana instruction."""
+    name: str
+    arguments: List[InstructionArgument]
+    accounts: List[InstructionAccount]
+    body: List[Dict[str, Any]]
+
+    def __post_init__(self):
+        if self.arguments is None:
+            self.arguments = []
+        if self.accounts is None:
+            self.accounts = []
+        if self.body is None:
+            self.body = []
+
+    def add_argument(self, name: str, type_name: str):
+        self.arguments.append(InstructionArgument(name, type_name))
+
+    def add_account(self, name: str, account_type: str, is_mutable: bool = False, is_signer: bool = False):
+        self.accounts.append(InstructionAccount(name, account_type, is_mutable, is_signer))
+
+    def to_ir(self) -> Dict[str, Any]:
+        return {
+            "type": "instruction",
+            "name": self.name,
+            "arguments": [arg.to_ir() for arg in self.arguments],
+            "accounts": [acc.to_ir() for acc in self.accounts],
+            "body": self.body
+        }

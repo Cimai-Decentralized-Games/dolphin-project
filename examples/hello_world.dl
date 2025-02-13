@@ -1,0 +1,25 @@
+program HelloWorld {
+    // Program ID
+    id: "Hello9999999999999999999999999999999999999"
+    
+    // Account definition
+    account Greeting {
+        message: string
+        author: pubkey
+        timestamp: i64
+    }
+    
+    // Instructions
+    ix initialize(message: string) {
+        // @ marks account references
+        @greeting.message = message
+        @greeting.author = @signer
+        @greeting.timestamp = @clock.unix_timestamp
+    }
+    
+    ix update_message(new_message: string) {
+        require(@greeting.author == @signer, "Only author can update")
+        @greeting.message = new_message
+        @greeting.timestamp = @clock.unix_timestamp
+    }
+}
