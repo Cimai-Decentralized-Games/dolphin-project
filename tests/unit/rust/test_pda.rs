@@ -3,7 +3,7 @@ use solana_program::pubkey::Pubkey;
 use std::str::FromStr;
 
 #[test]
-fn test_create_program_address() {
+pub fn test_create_program_address() {
     let program_id = "Test111111111111111111111111111111111111111";
     let seeds = vec![b"test".to_vec(), vec![1, 2, 3]];
     
@@ -12,7 +12,7 @@ fn test_create_program_address() {
 }
 
 #[test]
-fn test_find_program_address() {
+pub fn test_find_program_address() {
     let program_id = "Test111111111111111111111111111111111111111";
     let seeds = vec![b"test".to_vec(), vec![1, 2, 3]];
     
@@ -20,11 +20,11 @@ fn test_find_program_address() {
     assert!(result.is_ok());
     
     let (pda, bump) = result.unwrap();
-    assert!(bump < 256);
+    assert!(bump < 255);
 }
 
 #[test]
-fn test_invalid_program_id() {
+pub fn test_invalid_program_id() {
     let program_id = "invalid";
     let seeds = vec![b"test".to_vec()];
     

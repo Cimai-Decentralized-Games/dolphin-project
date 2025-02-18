@@ -20,12 +20,12 @@ class CounterProgram:
     @instruction
     def increment(self):
         """Increment the counter"""
-        assert self.counter.authority == self.signer, "Only authority can increment"
+        assert self.counter.authority == self.signer
         self.counter.count += 1
 
     @instruction
     def decrement(self):
         """Decrement the counter"""
-        assert self.counter.authority == self.signer, "Only authority can decrement"
-        assert self.counter.count > 0, "Counter cannot go below zero"
+        assert self.counter.authority == self.signer
+        assert self.counter.count > 0
         self.counter.count -= 1

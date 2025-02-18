@@ -8,9 +8,9 @@ from dolphin.prelude import *
 class MultisigWallet:
     @account
     class WalletConfig:
-        owners: List[Pubkey]  # List of wallet owners
-        threshold: u8         # Number of signatures required
-        nonce: u32           # Transaction counter
+        owners: List[Pubkey]  
+        threshold: u8         
+        nonce: u32           
 
     @account
     @pda("wallet", "nonce")
@@ -26,8 +26,8 @@ class MultisigWallet:
     @instruction
     def initialize_wallet(self, owners: List[Pubkey], threshold: u8):
         """Initialize a new multisig wallet"""
-        assert 1 <= threshold <= len(owners), "Invalid threshold"
-        assert len(owners) <= 10, "Too many owners"
+        assert 1 <= threshold <= len(owners)
+        assert len(owners) <= 10
         
         self.config.owners = owners
         self.config.threshold = threshold
@@ -41,7 +41,7 @@ class MultisigWallet:
         data: List[u8]
     ):
         """Propose a new transaction"""
-        assert self.signer in self.config.owners, "Not an owner"
+        assert self.signer in self.config.owners
         
         nonce = self.config.nonce
         self.config.nonce += 1
@@ -61,8 +61,8 @@ class MultisigWallet:
     @instruction
     def approve_transaction(self):
         """Approve a proposed transaction"""
-        assert self.signer in self.config.owners, "Not an owner"
-        assert not self.transaction.executed, "Already executed"
+        assert self.signer in self.config.owners
+        assert not self.transaction.executed
         
         owner_index = self.config.owners.index(self.signer)
         self.transaction.signers[owner_index] = True
@@ -70,11 +70,11 @@ class MultisigWallet:
     @instruction
     def execute_transaction(self):
         """Execute a transaction that has enough approvals"""
-        assert not self.transaction.executed, "Already executed"
+        assert not self.transaction.executed
         
         # Count approvals
         approval_count = sum(1 for approved in self.transaction.signers if approved)
-        assert approval_count >= self.config.threshold, "Not enough approvals"
+        assert approval_count >= self.config.threshold
         
         # Mark as executed
         self.transaction.executed = True

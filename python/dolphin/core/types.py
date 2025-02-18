@@ -70,17 +70,17 @@ class SolanaAccount:
 @dataclass
 class TokenAccount(SolanaAccount):
     """Specialized account class for SPL Tokens."""
-    
-    mint: str
-    token_amount: int
-    decimals: int
-    is_frozen: bool = False
-    delegate: Optional[str] = None
-    
+
+    mint: Optional[str] = None  # ✅ Default to None (not every account is a mint)
+    token_amount: int = 0  # ✅ Default (Starts at 0)
+    decimals: int = 9  # ✅ Default (Standard for SPL Tokens)
+    is_frozen: bool = False  # ✅ Default (Not frozen by default)
+    delegate: Optional[str] = None  # ✅ Default (No delegate by default)
+
     def __post_init__(self):
         """Additional validation for token-specific fields."""
         super().__post_init__()
-        if not validate_address(self.mint):
+        if self.mint and not validate_address(self.mint):
             raise ValueError(f"Invalid mint address: {self.mint}")
         if self.delegate and not validate_address(self.delegate):
             raise ValueError(f"Invalid delegate address: {self.delegate}")
@@ -100,6 +100,7 @@ class TokenAccount(SolanaAccount):
             "delegate": self.delegate
         })
         return base_dict
+
 
 @dataclass
 class AccountField:

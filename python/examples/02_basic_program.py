@@ -29,7 +29,7 @@ class TokenProgram:
     @instruction
     def mint_to(self, amount: u64):
         """Mint tokens to an account"""
-        assert self.mint.authority == self.signer, "Only mint authority can mint"
+        assert self.mint.authority == self.signer
         
         self.token_account.amount += amount
         self.mint.supply += amount
@@ -37,9 +37,9 @@ class TokenProgram:
     @instruction
     def transfer(self, amount: u64, to_account: TokenAccount):
         """Transfer tokens between accounts"""
-        assert self.token_account.owner == self.signer, "Only owner can transfer"
-        assert self.token_account.amount >= amount, "Insufficient funds"
-        assert self.token_account.mint == to_account.mint, "Mints must match"
+        assert self.token_account.owner == self.signer
+        assert self.token_account.amount >= amount
+        assert self.token_account.mint == to_account.mint
 
         self.token_account.amount -= amount
         to_account.amount += amount

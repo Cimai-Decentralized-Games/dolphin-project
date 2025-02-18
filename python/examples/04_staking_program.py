@@ -42,7 +42,7 @@ class StakingProgram:
     @instruction
     def stake(self, amount: u64, user_token_account: TokenAccount):
         """Stake tokens into the pool"""
-        assert user_token_account.mint == self.pool.stake_mint, "Invalid token mint"
+        assert user_token_account.mint == self.pool.stake_mint
         
         # Update rewards
         self._update_rewards()
@@ -60,7 +60,7 @@ class StakingProgram:
     @instruction
     def claim_rewards(self, user_reward_account: TokenAccount):
         """Claim accumulated rewards"""
-        assert user_reward_account.mint == self.pool.reward_mint, "Invalid reward mint"
+        assert user_reward_account.mint == self.pool.reward_mint
         
         # Update rewards
         self._update_rewards()

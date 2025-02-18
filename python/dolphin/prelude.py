@@ -5,10 +5,10 @@ This module exports commonly used types and decorators for Solana program develo
 Import this module to get started with Dolphin development.
 """
 
-from typing import List, Optional, Union, Dict, Any
-from dataclasses import dataclass
+from typing import List, Optional, Union, Dict, Any, TypeVar, Generic
+from dataclasses import dataclass, field
 from base58 import b58encode, b58decode
-from . import native  # This imports our Rust functions
+from datetime import datetime
 
 # Re-export core decorators
 from .core.decorators import (
@@ -17,7 +17,8 @@ from .core.decorators import (
     instruction,
     pda,
     mutable,
-    signer
+    signer,
+    validate
 )
 
 # Re-export core types
@@ -25,18 +26,33 @@ from .core.types import (
     SolanaAccount,
     AccountDefinition,
     InstructionDefinition,
-    TokenAccount
+    TokenAccount,
+    AccountMeta,
+    Program,
+    Clock
 )
+
+# Type variable for generic type hints
+T = TypeVar('T')
 
 # Solana primitive types
 class Pubkey(str):
-    """Solana public key type"""
+    """Solana public key type with additional functionality"""
     @classmethod
     def from_bytes(cls, bytes_data: bytes) -> 'Pubkey':
         return cls(b58encode(bytes_data).decode())
 
     def to_bytes(self) -> bytes:
         return b58decode(self)
+    
+    @classmethod
+    def default(cls) -> 'Pubkey':
+        """Returns default pubkey (all zeros)"""
+        return cls("11111111111111111111111111111111")
+
+    def key(self) -> 'Pubkey':
+        """Get the public key"""
+        return self
 
 # Common Solana types
 u8 = int
@@ -49,6 +65,8 @@ i32 = int
 i64 = int
 f32 = float
 f64 = float
+bytes32 = bytes
+string = str
 
 # Type aliases for clarity
 Amount = u64
@@ -56,7 +74,42 @@ Lamports = u64
 UnixTimestamp = i64
 Slot = u64
 
-# Common account types
+@dataclass
+class Result(Generic[T]):
+    """Result type for handling success/failure"""
+    value: Optional[T] = None
+    error: Optional[str] = None
+    
+    @property
+    def is_ok(self) -> bool:
+        return self.error is None
+    
+    @property
+    def is_err(self) -> bool:
+        return self.error is not None
+
+@dataclass
+class Signer:
+    """Transaction signer"""
+    pubkey: Pubkey
+    is_writable: bool = True
+    
+    def key(self) -> Pubkey:
+        """Get the signer's public key"""
+        return self.pubkey
+
+@dataclass
+class GameState:
+    """Base class for game state accounts"""
+    version: u8 = 1
+    authority: Pubkey = field(default_factory=Pubkey.default)
+    is_initialized: bool = False
+    last_update: UnixTimestamp = field(default_factory=lambda: int(datetime.now().timestamp()))
+
+    def validate(self) -> bool:
+        """Validate account state"""
+        return self.is_initialized
+
 @dataclass
 class Mint:
     """Token mint account"""
@@ -80,43 +133,51 @@ class TokenAccountData:
 # Common errors
 class DolphinError(Exception):
     """Base class for Dolphin errors"""
-    pass
+    code: int = 0
+    message: str = ""
+
+    def __init__(self, message: Optional[str] = None):
+        super().__init__(message or self.message)
 
 class AccountNotFoundError(DolphinError):
     """Raised when an account is not found"""
-    pass
+    code = 100
+    message = "Account not found"
 
 class InsufficientFundsError(DolphinError):
     """Raised when an account has insufficient funds"""
-    pass
+    code = 101
+    message = "Insufficient funds"
 
 class InvalidProgramError(DolphinError):
     """Raised when a program ID is invalid"""
-    pass
+    code = 102
+    message = "Invalid program ID"
+
+class ValidationError(DolphinError):
+    """Raised when validation fails"""
+    code = 103
+    message = "Validation failed"
 
 # Utility functions
 def create_program_address(seeds: List[Union[bytes, str]], program_id: Pubkey) -> Pubkey:
     """Create a program derived address (PDA)"""
-    # Convert seeds to bytes if they're strings
     seed_bytes = [
         s.encode('utf-8') if isinstance(s, str) else s
         for s in seeds
     ]
-    
-    # Call Rust implementation
-    address = native.create_program_address(seed_bytes, str(program_id))
+    from . import dolphin  # Import here to avoid circular imports
+    address = dolphin.create_program_address(seed_bytes, str(program_id))
     return Pubkey(address)
 
 def find_program_address(seeds: List[Union[bytes, str]], program_id: Pubkey) -> tuple[Pubkey, int]:
     """Find a program derived address and bump seed"""
-    # Convert seeds to bytes if they're strings
     seed_bytes = [
         s.encode('utf-8') if isinstance(s, str) else s
         for s in seeds
     ]
-    
-    # Call Rust implementation
-    address, bump = native.find_program_address(seed_bytes, str(program_id))
+    from . import dolphin  # Import here to avoid circular imports
+    address, bump = dolphin.find_program_address(seed_bytes, str(program_id))
     return Pubkey(address), bump
 
 # Common constants
@@ -125,6 +186,12 @@ TOKEN_PROGRAM_ID = Pubkey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
 ASSOCIATED_TOKEN_PROGRAM_ID = Pubkey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
 RENT_SYSVAR_ID = Pubkey("SysvarRent111111111111111111111111111111111")
 CLOCK_SYSVAR_ID = Pubkey("SysvarC1ock11111111111111111111111111111111")
+METADATA_PROGRAM_ID = Pubkey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")
+
+# Version information
+__version__ = "0.1.0"
+__author__ = "Caballo Loko"
+__email__ = "caballoloko@cimai.biz"
 
 # Example usage in docstring
 __doc__ += """
@@ -135,44 +202,56 @@ from dolphin.prelude import *
 @program("MyProgFg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS")
 class MyProgram:
     @account
-    class UserAccount:
-        owner: Pubkey
-        balance: u64
-        data: List[u8]
+    class GameAccount(GameState):
+        player: Pubkey
+        score: u64
+        last_play: UnixTimestamp
 
     @instruction
-    def initialize(self, owner: Pubkey):
-        # Implementation
-        pass
+    def initialize(
+        self,
+        game: GameAccount,
+        authority: Signer,
+        system_program: Program = SYSTEM_PROGRAM_ID
+    ):
+        game.authority = authority.key()
+        game.score = 0
+        game.last_play = 0
+        game.is_initialized = True
 
     @instruction
-    def transfer(self, amount: u64):
-        # Implementation
-        pass
+    def play(
+        self,
+        game: GameAccount,
+        player: Signer,
+        clock: Clock = CLOCK_SYSVAR_ID
+    ):
+        assert game.authority == player.key(), "Invalid player"
+        assert game.is_initialized, "Game not initialized"
+        game.score += 1
+        game.last_play = clock.unix_timestamp
 
 Example PDA usage:
 
 @program("MyProgFg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS")
-class MyProgram:
+class GameProgram:
     @account
-    @pda("owner", "mint")
-    class TokenAccount:
-        owner: Pubkey
-        mint: Pubkey
-        amount: u64
+    @pda(seeds=["game", "player"])
+    class PlayerState(GameState):
+        player: Pubkey
+        score: u64
+        level: u8
 
     @instruction
-    def initialize(self, owner: Pubkey, mint: Pubkey):
-        # PDA is automatically derived
-        pda, bump = find_program_address(
-            [b"token", owner.to_bytes(), mint.to_bytes()],
-            self.program_id
-        )
-        # Rest of implementation
-        pass
+    def initialize_player(
+        self,
+        state: PlayerState,
+        player: Signer,
+        system_program: Program = SYSTEM_PROGRAM_ID
+    ):
+        state.authority = player.key()
+        state.player = player.key()
+        state.score = 0
+        state.level = 1
+        state.is_initialized = True
 """
-
-# Version information
-__version__ = "0.1.0"
-__author__ = "Your Name"
-__email__ = "your.email@example.com"

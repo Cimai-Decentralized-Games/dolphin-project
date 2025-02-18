@@ -1,15 +1,12 @@
+#tests/conftest.py
 import pytest
 import asyncio
 import os
 import shutil
 from pathlib import Path
-from solana.keypair import Keypair
-from solana.rpc.async_api import AsyncClient
-from typing import Generator, AsyncGenerator
+from typing import Generator, AsyncGenerator, NamedTuple
 from dolphin.parser import SolanaParser
-from dolphin.dl.parser import DLParser
 from dolphin.compiler import compile_program, CompilerConfig
-from dolphin.deployer import ProgramDeployer
 
 # Constants for test configuration
 TEST_RPC_URL = "http://localhost:8899"
@@ -17,6 +14,25 @@ TEST_DIR = Path(__file__).parent
 TEST_PROGRAMS_DIR = TEST_DIR / "test_programs"
 TEST_OUTPUT_DIR = TEST_DIR / "test_output"
 EXAMPLE_PROGRAM_ID = "Test999999999999999999999999999999999999999"
+
+# Create a custom KeyPair class to maintain similar interface
+class KeyPair(NamedTuple):
+    public_key: bytes
+    private_key: bytes
+    signing_key: nacl.signing.SigningKey
+    
+    @classmethod
+    def generate(cls) -> 'KeyPair':
+        signing_key = nacl.signing.SigningKey.generate()
+        verify_key = signing_key.verify_key
+        return cls(
+            public_key=verify_key.encode(),
+            private_key=signing_key.encode(),
+            signing_key=signing_key
+        )
+    
+    def sign(self, message: bytes) -> bytes:
+        return self.signing_key.sign(message).signature
 
 @pytest.fixture(scope="session")
 def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
@@ -39,29 +55,16 @@ def test_dirs() -> Generator[tuple[Path, Path], None, None]:
         shutil.rmtree(TEST_PROGRAMS_DIR)
 
 @pytest.fixture(scope="session")
-async def solana_client() -> AsyncGenerator[AsyncClient, None]:
-    """Provide a Solana RPC client."""
-    async with AsyncClient(TEST_RPC_URL) as client:
-        yield client
+def solana_client():
+    """Provide a Solana test client."""
+    return SolanaTestClient()
 
 @pytest.fixture(scope="session")
-def payer_keypair() -> Keypair:
+def funded_keypair(solana_client):
     """Provide a funded keypair for tests."""
-    return Keypair()
-
-@pytest.fixture(scope="session")
-async def funded_payer(
-    solana_client: AsyncClient,
-    payer_keypair: Keypair
-) -> AsyncGenerator[Keypair, None]:
-    """Provide a funded keypair for tests."""
-    await solana_client.request_airdrop(
-        payer_keypair.public_key,
-        10_000_000_000  # 10 SOL
-    )
-    # Wait for confirmation
-    await asyncio.sleep(1)
-    yield payer_keypair
+    keypair = solana_client.create_keypair()
+    solana_client.request_airdrop(keypair["publicKey"])
+    return keypair
 
 @pytest.fixture
 def example_program_py() -> str:
@@ -236,7 +239,7 @@ def assert_program_structure():
 def setup_test_environment():
     """Setup test environment variables."""
     os.environ["DOLPHIN_TEST_MODE"] = "1"
-    os.environ["SOLANA_NETWORK"] = "localnet"
+    os.environ["SOLANA_NETWORK"] = "devnet"
     yield
     del os.environ["DOLPHIN_TEST_MODE"]
     del os.environ["SOLANA_NETWORK"]

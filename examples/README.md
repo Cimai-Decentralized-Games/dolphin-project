@@ -1,305 +1,220 @@
+# Dolphin Examples
 
-```markdown
-# Dolphin API Reference
+This directory contains example programs demonstrating various features of the Dolphin framework.
 
-## Core Decorators
+## Basic Examples
 
-### @program
-Defines a Solana program.
-
-```python
-@program(program_id: str)
-class MyProgram:
-    """
-    Parameters:
-        program_id (str): Base-58 encoded program ID
-    Example:
-        @program("MyProgFg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS")
-        class MyProgram:
-            pass
-    """
-```
-
-### @account
-Defines a program account structure.
+### 1. [Basic Counter](01_basic_program.py)
+A simple counter program demonstrating basic account management and instructions.
 
 ```python
-@account
-class MyAccount:
-    """
-    Attributes:
-        pubkey (Pubkey): Account's public key (automatically added)
-        discriminator (bytes): Account type discriminator (automatically added)
-    Example:
-        @account
-        class UserAccount:
-            owner: Pubkey
-            balance: u64
-    """
+from dolphin.prelude import *
+
+@program("CounterProg111111111111111111111111111111111111")
+class CounterProgram:
+    @account
+    class Counter:
+        authority: Pubkey
+        count: u64
+
+    @instruction
+    def initialize(self, counter: Counter, authority: Signer):
+        counter.authority = authority.key()
+        counter.count = 0
+
+    @instruction
+    def increment(self, counter: Counter, authority: Signer):
+        assert counter.authority == authority.key(), "Invalid authority"
+        counter.count += 1
 ```
 
-### @instruction
-Defines a program instruction.
+### 2. [Token Program](02_basic_program.py)
+A basic token program showing token creation and transfers.
 
 ```python
-@instruction
-def my_instruction(self, arg1: u64, arg2: Pubkey):
-    """
-    Context Attributes:
-        self.program_id (Pubkey): Program's public key
-        self.signer (Pubkey): Transaction signer
-        self.clock (Clock): Solana clock sysvar
-    Example:
-        @instruction
-        def transfer(self, amount: u64):
-            assert self.from_account.owner == self.signer
-            self.from_account.balance -= amount
-            self.to_account.balance += amount
-    """
+@program("TokenProg111111111111111111111111111111111111")
+class TokenProgram:
+    @account
+    class TokenMint:
+        authority: Pubkey
+        supply: u64
+        decimals: u8
+
+    @account
+    @pda(seeds=["token", "owner"])
+    class TokenAccount:
+        owner: Pubkey
+        mint: Pubkey
+        amount: u64
 ```
 
-### @pda
-Defines a Program Derived Address account.
+## Advanced Examples
+
+### 3. [NFT Marketplace](03_nft_marketplace.py)
+A complete NFT marketplace with listing, bidding, and trading functionality.
+
+Key features:
+- NFT minting and metadata
+- Marketplace listings
+- Bidding system
+- Royalty distribution
+
+### 4. [Staking Program](04_staking_program.py)
+A staking program with rewards distribution.
+
+Features:
+- Token staking
+- Reward calculation
+- Compound interest
+- Lock periods
+
+### 5. [Multisig Wallet](05_multisig_wallet.py)
+A multi-signature wallet implementation.
+
+Features:
+- Multiple signers
+- Transaction proposal
+- Execution threshold
+- Timelock functionality
+
+## Game Examples
+
+### 6. [Hello World Game](hello_world_game.py)
+A simple game demonstrating Dolphin's game development features.
 
 ```python
-@account
-@pda("owner", "mint")
-class TokenAccount:
-    """
-    Parameters:
-        seeds (str): Account field names to use as PDA seeds
-    Example:
-        @account
-        @pda("owner", "mint")
-        class TokenAccount:
-            owner: Pubkey
-            mint: Pubkey
-            balance: u64
-    """
+@program("HeLLo777777777777777777777777777777777777777")
+class HelloWorldGame:
+    @account
+    class GameState(GameState):
+        player: Pubkey
+        score: u64
+        last_play: UnixTimestamp
+
+    @account
+    @pda(seeds=["player"])
+    class PlayerState:
+        owner: Pubkey
+        games_played: u64
+        wins: u64
 ```
 
-## Types
+## Running Examples
 
-### Basic Types
+1. Build an example:
+```bash
+# Navigate to example directory
+cd examples
 
-```python
-# Integer Types
-u8: int # 0 to 255
-u16: int # 0 to 65,535
-u32: int # 0 to 4,294,967,295
-u64: int # 0 to 18,446,744,073,709,551,615
-i8: int # -128 to 127
-i16: int # -32,768 to 32,767
-i32: int # -2,147,483,648 to 2,147,483,647
-i64: int # -9,223,372,036,854,775,808 to 9,223,372,036,854,775,807
-
-# Other Basic Types
-bool: bool # True or False
-str: str # String (converted to bytes in Solana)
+# Build specific example
+dolphin build hello_world_game.py
 ```
 
-### Special Types
+2. Run tests:
+```bash
+# Run all example tests
+make test-examples
 
-```python
-from dolphin.prelude import
-    Pubkey # Solana public key
-    Amount # Type alias for u64, used for token amounts
-    Lamports # Type alias for u64, used for SOL amounts
-    UnixTimestamp # Type alias for i64, used for timestamps
-Types
+# Run specific example test
+pytest tests/examples/test_hello_world_game.py
 ```
 
-### Container Types
-
-```python
-from typing import List, Optional
-List[T] # Variable-length array of type T
-Optional[T] # Optional value of type T
+3. Deploy:
+```bash
+# Deploy to devnet
+dolphin deploy hello_world_game.py --network devnet
 ```
 
-## Account Context
+## Project Structure
 
-### Available Properties
-
-```python
-self.program_id: Pubkey # Program's public key
-self.signer: Pubkey # Transaction signer's public key
-self.clock: Clock # Solana clock sysvar
-```
-
-### Clock Sysvar
-
-```python
-class Clock:
-    slot: u64 # Current slot
-    epoch_start_timestamp: i64 # Start time of current epoch
-    epoch: u64 # Current epoch
-    leader_schedule_epoch: u64 # Leader schedule epoch
-    unix_timestamp: i64 # Current Unix timestamp
-```
-
-## Error Handling
-
-### Standard Errors
-
-```python
-from dolphin.prelude import DolphinError
-class AccountNotFoundError(DolphinError):
-    pass
-class InsufficientFundsError(DolphinError):
-    pass
-class InvalidProgramError(DolphinError):
-    pass
-```
-
-### Custom Errors
-
-```python
-from dolphin.prelude import define_error
-@define_error
-class InvalidStateError(DolphinError):
-    code = 6000
-    message = "Account is in an invalid state"
-```
-
-## Testing Utilities
-
-### ProgramTest
-
-```python
-from dolphin.testing import ProgramTest
-async def test_program():
-    # Load program
-    program = await ProgramTest.load("my_program.py")
-    # Create test accounts
-    account = await program.create_account("MyAccount")
-    keypair = program.create_keypair()
-    # Execute instructions
-    await program.my_instruction(
-        arg1=100,
-        arg2=keypair.pubkey(),
-        signers=[keypair]
-    )
-```
-
-### Account Creation
-
-```python
-# Create account with random address
-account = await program.create_account(
-    account_type="MyAccount",
-    payer=payer_keypair
-)
-
-# Create PDA account
-pda_account = await program.create_pda_account(
-    account_type="TokenAccount",
-    seeds={"owner": owner.pubkey(), "mint": mint.pubkey()}
-)
-```
-
-## Dolphin Language (DL) Syntax
-
-### Program Definition
+Each example follows this structure:
 
 ```
-program MyProgram {
-    id: "MyProgFg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
-    account MyAccount {
-        owner: pubkey
-        balance: u64
-    }
-    ix initialize(owner: pubkey) {
-        @account.owner = owner
-        @account.balance = 0
-    }
-}
+example_name/
+├── program/
+│   └── lib.py          # Main program code
+├── tests/
+│   └── test_program.py # Program tests
+└── client/             # JavaScript client
+    └── src/
+        └── index.ts    # Client implementation
 ```
 
-### Special Variables
+## Best Practices Demonstrated
 
-```
-@signer     # Transaction signer
-@program_id # Program ID
-@clock      # Clock sysvar
-@account    # Current account context
-@rent       # Rent sysvar
-```
+1. **Account Management**
+   - Proper account validation
+   - PDA usage
+   - State management
 
-## Utility Functions
+2. **Security**
+   - Authority checks
+   - Signer validation
+   - Access control
 
-### PDA Functions
+3. **Error Handling**
+   - Custom error types
+   - Proper error messages
+   - Validation checks
 
-```python
-from dolphin.prelude import create_program_address, find_program_address
+4. **Testing**
+   - Unit tests
+   - Integration tests
+   - Error case testing
 
-# Create PDA
-pda = create_program_address(
-    seeds=[b"token", owner.to_bytes(), mint.to_bytes()],
-    program_id=program_id
-)
+## Game Development Features
 
-# Find PDA and bump
-pda, bump = find_program_address(
-    seeds=[b"token", owner.to_bytes(), mint.to_bytes()],
-    program_id=program_id
-)
-```
+1. **State Management**
+   ```python
+   @account
+   class GameState:
+       version: u8
+       authority: Pubkey
+       is_initialized: bool
+   ```
 
-### Pubkey Utilities
+2. **Agent Integration**
+   ```python
+   from dolphin.dolphin_games import train_agent
 
-```python
-from dolphin.prelude import Pubkey
+   agent = train_agent(
+       game=game,
+       training_params={
+           "episodes": 1000,
+           "learning_rate": 0.001
+       }
+   )
+   ```
 
-# Create from string
-pubkey = Pubkey("11111111111111111111111111111111")
+3. **Casino Integration**
+   ```python
+   from dolphin.dolphin_games import deploy_to_casino
 
-# Convert to bytes
-bytes_data = pubkey.to_bytes()
+   deploy_to_casino(
+       game=game,
+       agent=agent,
+       casino_program_id=CASINO_ID
+   )
+   ```
 
-# Create from bytes
-pubkey = Pubkey.from_bytes(bytes_data)
-```
+## Contributing
 
-## Constants
+To add a new example:
 
-### System Program IDs
+1. Create a new file in the examples directory
+2. Add corresponding tests
+3. Update this README
+4. Submit a pull request
 
-```python
-from dolphin.prelude import (
-    SYSTEM_PROGRAM_ID,
-    TOKEN_PROGRAM_ID,
-    ASSOCIATED_TOKEN_PROGRAM_ID,
-    RENT_SYSVAR_ID,
-    CLOCK_SYSVAR_ID
-)
-```
+Guidelines:
+- Include clear documentation
+- Add comprehensive tests
+- Follow Dolphin best practices
+- Demonstrate practical use cases
 
-## Compiler Options
+## Support
 
-### Build Configuration
-
-```python
-from dolphin.compiler import CompilerConfig
-
-config = CompilerConfig(
-    optimize=True,
-    debug_symbols=False,
-    target="bpf-unknown-unknown",
-    features=["custom-feature"]
-)
-```
-
-### Program Metadata
-
-```python
-from dolphin.compiler import ProgramMetadata
-
-metadata = ProgramMetadata(
-    name="MyProgram",
-    version="1.0.0",
-    description="My Solana Program",
-    authors=["Your Name <your.email@example.com>"]
-)
-```
-I focused on maintaining code fences for all the code snippets, I did not find a section for macros so I created it, I hope that follows the request!
+For questions about the examples:
+- Join our [Discord](https://discord.gg/dolphin)
+- Check the [Documentation](https://docs.dolphin.dev)
+- Open an [Issue](https://github.com/yourusername/dolphin/issues)

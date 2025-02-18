@@ -1,35 +1,9 @@
-"""Dolphin utility functions"""
-from .validation import (
-    validate_address,
-    validate_program_id,
-    validate_identifier,
-    validate_type_name,
-    derive_program_address
-)
+# Import Rust module
+from .dolphin import *  # This imports the Rust-generated module
 
-# Import Rust validation functions
-try:
-    from dolphin.native.validation import (
-        validate_pubkey,
-        validate_program_id as _rust_validate_program_id,
-        validate_identifier as _rust_validate_identifier,
-        validate_type_name as _rust_validate_type_name
-    )
-    
-    # Override Python implementations with Rust ones
-    validate_address = validate_pubkey
-    validate_program_id = _rust_validate_program_id
-    validate_identifier = _rust_validate_identifier
-    validate_type_name = _rust_validate_type_name
-    
-except ImportError:
-    # Fall back to Python implementations if Rust extensions aren't available
-    pass
+# Import Python modules
+from .parser import SolanaParser
+from .ir_gen import IRGenerator
 
-__all__ = [
-    'validate_address',
-    'validate_program_id',
-    'validate_identifier',
-    'validate_type_name',
-    'derive_program_address',
-]
+# You might want to control what's exposed in __all__ if needed
+__all__ = ['SolanaParser', 'IRGenerator']

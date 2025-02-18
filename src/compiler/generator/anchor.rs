@@ -131,22 +131,39 @@ fn calculate_account_space(account: &Account) -> usize {
 
 fn generate_instruction_body(statements: &[Statement]) -> String {
     let mut code = String::new();
-    
+
     for statement in statements {
         match &statement.kind {
             StatementKind::Assignment { target, value } => {
                 code.push_str(&format!("    {} = {};\n", target, generate_expression(value)));
-            },
+            }
             StatementKind::MethodCall { target, method, args } => {
                 let args_str = args.iter()
                     .map(generate_expression)
                     .collect::<Vec<_>>()
                     .join(", ");
                 code.push_str(&format!("    {}.{}({});\n", target, method, args_str));
-            },
+            }
+            StatementKind::require { data } => {
+                // Extract span information from the RequireData struct
+                let line = data.span.line;
+                let column = data.span.column;
+
+                // Construct an error message
+                let error_message = format!(
+                    "\"{}\" at line {}, column {}",
+                    data.message, line, column
+                );
+
+                // Use require! macro with the error message
+                code.push_str(&format!("    require!({}, {});\n", 
+                    generate_expression(&data.condition), 
+                    error_message
+                ));
+            }
         }
     }
-    
+
     code
 }
 

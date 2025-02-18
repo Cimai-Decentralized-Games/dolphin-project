@@ -1,204 +1,243 @@
-# python/dolphin/ir_gen.py
-import ast
-from typing import List, Optional, Dict, Any
+from pathlib import Path 
+from typing import Dict, List, Optional, Union, Any
+import json
+from dataclasses import asdict
+
+from .parser import SolanaParser
 from .core.types import (
-    AccountDefinition, 
-    AccountField, 
-    InstructionDefinition,
-    InstructionArgument,
-    InstructionAccount,
-    SolanaType
+    SolanaType, AccountDefinition, InstructionDefinition,
+    AccountField, InstructionAccount
 )
-from .ast import Node, parse_file
-from dolphin.generator.accounts import AccountDefinition as AccountDefinitionGenerator
-from dolphin.generator.instructions import InstructionDefinition as InstructionDefinitionGenerator
+from .ir import (
+    IRProgram, IRAccount, IRInstruction, IRField,
+    IRArgument, IRAccountUsage, IRStatement, IRRequire,
+    IRExpression, IRLiteral, IRVariable, IRBinaryOp,
+    IRRequireData, SpanData, IRMethodCall,
+    to_json
+)
 
-class IRGenerator(ast.NodeVisitor):
-    def __init__(self):
-        self.accounts: List[AccountDefinition] = []
-        self.instructions: List[InstructionDefinition] = []
-        self.current_scope: Optional[str] = None
-
-    def visit_ClassDef(self, node: ast.ClassDef):
-        """Process class definitions which could be accounts or instructions."""
-        decorators = [d for d in node.decorator_list if isinstance(d, ast.Name)]
-        decorator_names = {d.id for d in decorators}
-
-        if "account" in decorator_names:
-            self._process_account(node)
-        elif "instruction" in decorator_names:
-            self._process_instruction(node)
-
-    def _process_account(self, node: ast.ClassDef):
-        """Convert a Python class with @account decorator to an AccountDefinition."""
-        account = AccountDefinition(
-            name=node.name,
-            fields=[],
-            is_pda=False,
-            seeds=[]
+class IRGenerator:
+    """IR Generator that creates intermediate representation for Dolphin programs"""
+    
+    def __init__(self, source_code: str):
+        self.parser = SolanaParser(source_code)
+        self.program: Optional[IRProgram] = None
+        
+    def generate(self) -> IRProgram:
+        """Generate IR from source code"""
+        self.program = self.parser.parse()
+        self._process_program()
+        return self.program
+        
+    def _process_program(self):
+        """Process program-level IR nodes"""
+        if not self.program:
+            raise ValueError("No program parsed")
+            
+        # Extract program_id from IRLiteral if needed
+        if isinstance(self.program.program_id, IRLiteral):
+            self.program.program_id = self.program.program_id.data["value"]
+            
+        # Process accounts
+        for account in self.program.accounts:
+            self._process_account(account)
+            
+        # Process instructions
+        for instruction in self.program.instructions:
+            self._process_instruction(instruction)
+    
+    def _process_account(self, account: IRAccount):
+        """Process account-level IR nodes"""
+        # Convert to AccountDefinition for validation
+        account_def = AccountDefinition(
+            name=account.name,
+            fields=[
+                AccountField(
+                    name=field.name,
+                    type_name=field.type_name,
+                    attributes=field.attributes
+                )
+                for field in account.fields
+            ],
+            is_pda=account.is_pda,
+            seeds=account.seeds,
+            discriminator=account.discriminator
         )
         
-        # Process PDA decorator if present
-        for decorator in node.decorator_list:
-            if (isinstance(decorator, ast.Call) and 
-                isinstance(decorator.func, ast.Name) and 
-                decorator.func.id == "pda"):
-                seeds = [
-                    arg.s for arg in decorator.args 
-                    if isinstance(arg, ast.Str)
-                ]
-                account.set_pda(seeds)
-
-        # Process class body for fields
-        for item in node.body:
-            if isinstance(item, ast.AnnAssign):
-                field_name = item.target.id
-                field_type = self._get_type_annotation(item.annotation)
-                
-                # Get field attributes from decorators if any
-                attributes = []
-                if hasattr(item, 'decorator_list'):
-                    for decorator in item.decorator_list:
-                        if isinstance(decorator, ast.Name):
-                            attributes.append(decorator.id)
-                
-                account.add_field(field_name, field_type, attributes)
-
-        self.accounts.append(account)
-
-    def _process_instruction(self, node: ast.ClassDef):
-        """Convert a Python class with @instruction decorator to an InstructionDefinition."""
-        instruction = InstructionDefinition(
-            name=node.name,
-            arguments=[],
-            accounts=[],
-            body=[]
+        # Add default discriminator if PDA
+        if account_def.is_pda and not account_def.discriminator:
+            account_def.discriminator = f"{account_def.name.lower()}_type"
+            account.discriminator = account_def.discriminator
+            
+        # Validate and normalize field types
+        for field, ir_field in zip(account_def.fields, account.fields):
+            normalized_type = self._validate_and_normalize_type(field.type_name)
+            field.type_name = normalized_type
+            ir_field.type_name = normalized_type
+            
+    def _process_instruction(self, instruction: IRInstruction):
+        """Process instruction-level IR nodes"""
+        # Convert to InstructionDefinition for validation
+        instruction_def = InstructionDefinition(
+            name=instruction.name,
+            arguments=[
+                IRArgument(name=arg.name, type_name=arg.type_name)
+                for arg in instruction.args
+            ],
+            accounts=[
+                InstructionAccount(
+                    name=acc.name,
+                    account_type=acc.account_type,
+                    is_mutable=acc.is_mutable,
+                    is_signer=acc.is_signer
+                )
+                for acc in instruction.accounts
+            ],
+            body=[]  # Body will be processed separately
         )
         
-        for item in node.body:
-            if isinstance(item, ast.FunctionDef) and item.name == "execute":
-                # Process arguments
-                for arg in item.args.args:
-                    if arg.name != "self":
-                        arg_type = self._get_type_annotation(arg.annotation)
-                        instruction.add_argument(arg.name, arg_type)
-                
-                # Process accounts from context
-                for decorator in item.decorator_list:
-                    if (isinstance(decorator, ast.Call) and 
-                        isinstance(decorator.func, ast.Name) and 
-                        decorator.func.id == "accounts"):
-                        self._process_instruction_accounts(decorator, instruction)
-                
-                # Process instruction body
-                instruction.body = self._process_instruction_body(item.body)
-
-        self.instructions.append(instruction)
-
-    def _process_instruction_accounts(self, decorator: ast.Call, instruction: InstructionDefinition):
-        """Process accounts decorator for instruction context."""
-        for kw in decorator.keywords:
-            account_type = self._get_type_annotation(kw.value)
-            is_mutable = False
-            is_signer = False
-            
-            # Check for account attributes in decorator
-            if isinstance(kw.value, ast.Call):
-                for attr in kw.value.keywords:
-                    if attr.arg == "mutable":
-                        is_mutable = attr.value.value
-                    elif attr.arg == "signer":
-                        is_signer = attr.value.value
-            
-            instruction.add_account(kw.arg, account_type, is_mutable, is_signer)
-
-    def _get_type_annotation(self, annotation: ast.AST) -> str:
-        """Convert Python type annotations to Solana types."""
-        if isinstance(annotation, ast.Name):
-            return SolanaType.from_python_type(annotation.id)
-        elif isinstance(annotation, ast.Subscript):
-            value_type = self._get_type_annotation(annotation.slice.value)
-            return f"Vec<{value_type}>"
-        return "unknown"
-
-    def _process_instruction_body(self, body: List[ast.AST]) -> List[Dict[str, Any]]:
-        """Convert Python instruction body to IR representation."""
-        statements = []
-        for node in body:
-            if isinstance(node, ast.Assign):
-                statements.append({
-                    "type": "assignment",
-                    "target": self._process_expression(node.targets[0]),
-                    "value": self._process_expression(node.value)
-                })
-            elif isinstance(node, ast.Expr):
-                if isinstance(node.value, ast.Call):
-                    statements.append({
-                        "type": "call",
-                        "value": self._process_expression(node.value)
-                    })
-        return statements
-
-    def _process_expression(self, node: ast.AST) -> Dict[str, Any]:
-        """Convert Python expressions to IR representation."""
-        if isinstance(node, ast.Name):
-            return {"type": "variable", "name": node.id}
-        elif isinstance(node, ast.Num):
-            return {"type": "literal", "value": node.n}
-        elif isinstance(node, ast.Str):
-            return {"type": "literal", "value": node.s}
-        elif isinstance(node, ast.Call):
-            return {
-                "type": "call",
-                "function": self._process_expression(node.func),
-                "args": [self._process_expression(arg) for arg in node.args]
-            }
-        elif isinstance(node, ast.Attribute):
-            return {
-                "type": "attribute",
-                "value": self._process_expression(node.value),
-                "attr": node.attr
-            }
-        return {"type": "unknown"}
-
-    def generate(self, source_code: str) -> Dict[str, Any]:
-        """Generate IR from source code."""
-        tree = ast.parse(source_code)
-        self.visit(tree)
+        # Add necessary validation statements
+        self._add_account_validations(instruction, instruction_def)
         
-        return {
-            "accounts": [account.to_ir() for account in self.accounts],
-            "instructions": [instruction.to_ir() for instruction in self.instructions]
-        }
+        # Process instruction body
+        processed_body = []
+        for stmt in instruction.body:
+            processed_stmt = self._process_statement(stmt)
+            if processed_stmt:
+                processed_body.append(processed_stmt)
+        instruction.body = processed_body
+        
+    def _process_statement(self, stmt: IRStatement) -> Optional[IRStatement]:
+        """Process individual statements"""
+        if stmt.kind == "require":
+            return self._process_require(stmt)
+        elif stmt.kind == "assignment":
+            return self._process_assignment(stmt)
+        elif stmt.kind == "method_call":
+            return self._process_method_call(stmt)
+        return stmt
 
-def generate_ir(source_code: str) -> Dict[str, Any]:
-    """Convenience function to generate IR from source code."""
-    generator = IRGenerator()
-    return generator.generate(source_code)
+    def _process_assignment(self, stmt: IRStatement) -> IRStatement:
+        """Process assignment statements"""
+        return IRStatement(
+            kind="assignment",
+            data={
+                "target": stmt.data["target"],
+                "value": self._process_expression(stmt.data["value"])
+            }
+        )
+        
+    def _process_require(self, stmt: IRStatement) -> IRStatement:
+        """Process require statements"""
+        require_data = stmt.data
+        processed_data = IRRequireData(
+            condition=self._process_expression(require_data["condition"]),
+            message=require_data["message"],
+            span=SpanData(
+                line=require_data.get("span", {}).get("line", 0),
+                column=require_data.get("span", {}).get("column", 0)
+            )
+        )
+        return IRRequire(processed_data)
+        
+    def _process_method_call(self, stmt: IRStatement) -> IRStatement:
+        """Process method call statements"""
+        call_data = stmt.data
+        processed_args = [
+            self._process_expression(arg) for arg in call_data["args"]
+        ]
+        return IRMethodCall(
+            target=call_data["target"],
+            method=call_data["method"],
+            args=processed_args
+        )
+        
+    def _process_expression(self, expr: Union[IRExpression, Dict]) -> IRExpression:
+        """Process expressions"""
+        if isinstance(expr, dict):
+            if expr.get("kind") == "literal":
+                return IRLiteral(expr["data"]["value"])
+            elif expr.get("kind") == "variable":
+                return IRVariable(expr["data"]["name"])
+            elif expr.get("kind") == "binary_op":
+                return IRBinaryOp(
+                    expr["data"]["op"],
+                    self._process_expression(expr["data"]["left"]),
+                    self._process_expression(expr["data"]["right"])
+                )
+        return expr
+        
+    def _add_account_validations(self, instruction: IRInstruction, instruction_def: InstructionDefinition):
+        """Add necessary account validation statements"""
+        validations = []
+        
+        # Process existing assert/require statements to identify signer checks
+        for stmt in instruction.body:
+            if stmt.kind == "require":
+                if isinstance(stmt.data.get("condition", {}), dict):
+                    condition = stmt.data["condition"]
+                    if (condition.get("kind") == "binary_op" and
+                        condition["data"].get("op") == "==" and
+                        "authority" in str(condition["data"].get("left", {})) and
+                        "signer" in str(condition["data"].get("right", {}))):
+                        # This is a signer validation check - preserve the original message
+                        validations.append(stmt)
+        
+        # Add any additional signer validations from account definitions
+        for account in instruction_def.accounts:
+            if account.is_signer and not any("signer" in str(v.data.get("message")) for v in validations):
+                validations.append(
+                    IRRequire(
+                        IRRequireData(
+                            condition=IRBinaryOp(
+                                "==",
+                                IRVariable(f"{account.name}.key()"),
+                                IRVariable("signer.key()")
+                            ),
+                            message="signer validation required",
+                            span=SpanData(0, 0)
+                        )
+                    )
+                )
+        
+        # Add validations at the beginning of the instruction body
+        instruction.body = validations + [stmt for stmt in instruction.body if stmt not in validations]
+        
+    def _validate_and_normalize_type(self, type_name: str) -> str:
+        """Validate and normalize field types using SolanaType"""
+        try:
+            # Try to convert Python type to Solana type
+            return SolanaType.from_python_type(type_name)
+        except ValueError as e:
+            # If not a basic type, check if it's a custom type
+            if type_name.startswith("Vec<") or type_name.startswith("Option<"):
+                return type_name  # Already in Solana format
+            raise ValueError(f"Invalid type: {type_name}") from e
 
-if __name__ == "__main__":
-    # Example usage
-    sample_code = """
-    @account
-    @pda("mint", "owner")
-    class TokenAccount:
-        mint: Pubkey
-        owner: Pubkey
-        amount: int
-
-    @instruction
-    class Transfer:
-        def execute(self, amount: int):
-            self.token_account.amount -= amount
-    """
+class DolphinGenerator:
+    """Main generator class for Dolphin framework"""
     
-    ir = generate_ir(sample_code)
-    
-    # Print generated IR
-    for account in ir["accounts"]:
-        print(f"Account: {account.name}")
-        print(account.generate_code())
-    
-    for instruction in ir["instructions"]:
-        print(f"Instruction: {instruction.name}")
-        print(instruction.generate_code())
+    def __init__(self, program_path: str):
+        self.program_path = Path(program_path)
+        self.ir_generator: Optional[IRGenerator] = None
+        
+    def build_project(self):
+        """Build the Dolphin project"""
+        program_file = self.program_path / "program" / "lib.py"
+        with open(program_file, "r") as f:
+            source = f.read()
+            
+        # Generate IR
+        self.ir_generator = IRGenerator(source)
+        program_ir = self.ir_generator.generate()
+        
+        # Convert to JSON
+        ir_json = to_json(program_ir)
+        
+        # Save IR
+        ir_path = self.program_path / "target" / "ir.json"
+        with open(ir_path, "w") as f:
+            json.dump(ir_json, f, indent=2)
+            
+        print("✨ Successfully generated IR")
+        return program_ir

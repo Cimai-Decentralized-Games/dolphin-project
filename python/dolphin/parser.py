@@ -1,19 +1,28 @@
 import ast as py_ast
+import textwrap
 from typing import List, Optional, Dict, Any
-from .ast import Node
+import re
 from .ir import (
     IRProgram, IRAccount, IRInstruction, IRField, 
-    IRArgument, IRAccountUsage, IRStatement,
-    IRExpression, IRLiteral, IRVariable, IRBinaryOp
+    IRArgument, IRAccountUsage, IRStatement, IRRequire,
+    IRExpression, IRLiteral, IRVariable, IRBinaryOp,
+    SpanData, IRRequireData
 )
+from .core.types import SolanaType
 
 class SolanaParser:
+    VALID_TYPES = {'u8', 'u16', 'u32', 'u64', 'i8', 'i16', 'i32', 'i64', 
+                   'bool', 'str', 'bytes', 'Pubkey', 'string'}  # Added 'string' as alias for 'str'
+
     def __init__(self, source_code: str):
+        # Replace Vec<T> and Option<T> with temporary syntax for parsing
+        source_code = textwrap.dedent(source_code).strip()
+        source_code = re.sub(r'Vec<([^>]+)>', r'Vec_\1', source_code)
+        source_code = re.sub(r'Option<([^>]+)>', r'Option_\1', source_code)
         self.source_code = source_code
-        self.parsed_ast = py_ast.parse(source_code)
+        self.parsed_ast = py_ast.parse(self.source_code)
         self.current_program: Optional[IRProgram] = None
-        self.current_account: Optional[IRAccount] = None
-        self.current_instruction: Optional[IRInstruction] = None
+        self.processed_instructions: set = set()
 
     def parse(self) -> IRProgram:
         """Converts Python AST into Dolphin IR"""
@@ -32,28 +41,34 @@ class SolanaParser:
         
         if "program" in decorators:
             self._parse_program(node, decorators["program"])
-        elif "account" in decorators:
-            self._parse_account(node, decorators["account"])
-        elif "instruction" in decorators:
-            self._parse_instruction(node, decorators["instruction"])
+            for item in node.body:
+                if isinstance(item, py_ast.ClassDef):
+                    nested_decorators = self._get_decorators(item)
+                    if "account" in nested_decorators:
+                        self._parse_account(item, nested_decorators["account"])
+                elif isinstance(item, py_ast.FunctionDef):
+                    if any(d.id == "instruction" for d in item.decorator_list 
+                          if isinstance(d, py_ast.Name)):
+                        self._parse_instruction(item)
 
-    def _get_decorators(self, node: py_ast.ClassDef) -> Dict[str, Any]:
+    def _get_decorators(self, node: py_ast.AST) -> Dict[str, Any]:
         """Extract and parse decorators"""
         decorators = {}
-        for decorator in node.decorator_list:
-            if isinstance(decorator, py_ast.Name):
-                decorators[decorator.id] = None
-            elif isinstance(decorator, py_ast.Call):
-                if isinstance(decorator.func, py_ast.Name):
-                    args = [self._parse_expression(arg) for arg in decorator.args]
-                    kwargs = {
-                        kw.arg: self._parse_expression(kw.value) 
-                        for kw in decorator.keywords
-                    }
-                    decorators[decorator.func.id] = {
-                        "args": args,
-                        "kwargs": kwargs
-                    }
+        if hasattr(node, 'decorator_list'):
+            for decorator in node.decorator_list:
+                if isinstance(decorator, py_ast.Name):
+                    decorators[decorator.id] = None
+                elif isinstance(decorator, py_ast.Call):
+                    if isinstance(decorator.func, py_ast.Name):
+                        args = [self._parse_expression(arg) for arg in decorator.args]
+                        kwargs = {
+                            kw.arg: self._parse_expression(kw.value) 
+                            for kw in decorator.keywords
+                        }
+                        decorators[decorator.func.id] = {
+                            "args": args,
+                            "kwargs": kwargs
+                        }
         return decorators
 
     def _parse_program(self, node: py_ast.ClassDef, decorator_data: Dict) -> None:
@@ -78,55 +93,56 @@ class SolanaParser:
             pda_data = self._get_decorators(node)["pda"]
             if pda_data and pda_data["args"]:
                 account.is_pda = True
-                account.seeds = pda_data["args"]
+                account.seeds = [
+                    arg.data["value"] if isinstance(arg, IRLiteral) else str(arg)
+                    for arg in pda_data["args"]
+                ]
+                account.discriminator = f"{account.name.lower()}_type"
+
+        # Check for signer decorator
+        is_signer = "signer" in self._get_decorators(node)
 
         # Parse fields
         for item in node.body:
             if isinstance(item, py_ast.AnnAssign):
-                field = self._parse_field(item)
-                account.fields.append(field)
+                if isinstance(item.target, py_ast.Name):
+                    type_name = self._get_type_name(item.annotation)
+                    # Convert back Vec_T and Option_T to Vec<T> and Option<T>
+                    if type_name.startswith('Vec_'):
+                        type_name = f"Vec<{type_name[4:]}>"
+                    elif type_name.startswith('Option_'):
+                        type_name = f"Option<{type_name[7:]}>"
+                    
+                    # Validate type
+                    base_type = type_name.split('<')[1].rstrip('>') if '<' in type_name else type_name
+                    if base_type.lower() not in {t.lower() for t in self.VALID_TYPES}:
+                        raise ValueError(f"Invalid type: {base_type}")
+                    
+                    field = IRField(
+                        name=item.target.id,
+                        type_name=type_name,
+                        attributes=[]
+                    )
+                    account.fields.append(field)
 
         self.current_program.accounts.append(account)
 
-    def _parse_instruction(self, node: py_ast.ClassDef, decorator_data: Dict) -> None:
-        """Parse instruction class definition"""
+    def _parse_instruction(self, node: py_ast.FunctionDef) -> None:
+        """Parse instruction definition"""
         if not self.current_program:
             raise ValueError("Instruction must be defined within a program")
 
         instruction = IRInstruction(name=node.name)
-
-        # Parse instruction methods
-        for item in node.body:
-            if isinstance(item, py_ast.FunctionDef):
-                if item.name == "execute":
-                    self._parse_instruction_execute(item, instruction)
-
-        self.current_program.instructions.append(instruction)
-
-    def _parse_field(self, node: py_ast.AnnAssign) -> IRField:
-        """Parse account field definition"""
-        name = node.target.id
-        type_name = self._get_type_name(node.annotation)
-        attributes = []
-
-        # Parse field decorators if any
-        if hasattr(node, 'decorator_list'):
-            for decorator in node.decorator_list:
-                if isinstance(decorator, py_ast.Name):
-                    attributes.append(decorator.id)
-
-        return IRField(name=name, type_name=type_name, attributes=attributes)
-
-    def _parse_instruction_execute(self, node: py_ast.FunctionDef, instruction: IRInstruction) -> None:
-        """Parse instruction execute method"""
-        # Parse arguments
-        for arg in node.args.args[1:]:  # Skip 'self'
-            instruction.args.append(
-                IRArgument(
-                    name=arg.arg,
-                    type_name=self._get_type_name(arg.annotation)
+        
+        # Parse arguments (skip self)
+        for arg in node.args.args[1:]:
+            if hasattr(arg, 'annotation'):
+                instruction.args.append(
+                    IRArgument(
+                        name=arg.arg,
+                        type_name=self._get_type_name(arg.annotation)
+                    )
                 )
-            )
 
         # Parse accounts decorator if present
         for decorator in node.decorator_list:
@@ -136,7 +152,26 @@ class SolanaParser:
                 self._parse_accounts_decorator(decorator, instruction)
 
         # Parse body
-        instruction.body = [self._parse_statement(stmt) for stmt in node.body]
+        for stmt in node.body:
+            parsed_stmt = self._parse_statement(stmt)
+            if parsed_stmt:
+                instruction.body.append(parsed_stmt)
+
+        # Add signer validation if needed
+        for account in instruction.accounts:
+            if account.is_signer:
+                require_data = IRRequireData(
+                    condition=IRBinaryOp(
+                        "==",
+                        IRVariable(f"{account.name}.key()"),
+                        IRVariable("signer.key()")
+                    ),
+                    message=f"{account.name} must be signer",
+                    span=SpanData(0, 0)
+                )
+                instruction.body.insert(0, IRRequire(require_data))
+
+        self.current_program.instructions.append(instruction)
 
     def _parse_accounts_decorator(self, node: py_ast.Call, instruction: IRInstruction) -> None:
         """Parse accounts decorator configuration"""
@@ -161,66 +196,140 @@ class SolanaParser:
                 )
             )
 
-    def _parse_statement(self, node: py_ast.AST) -> IRStatement:
+    def _parse_statement(self, node: py_ast.AST) -> Optional[IRStatement]:
         """Parse instruction body statements"""
         if isinstance(node, py_ast.Assign):
+            target = node.targets[0]
+            if isinstance(target, py_ast.Name):
+                target_name = target.id
+            elif isinstance(target, py_ast.Attribute):
+                if isinstance(target.value, py_ast.Attribute):
+                    # Handle self.counter.authority
+                    if isinstance(target.value.value, py_ast.Name) and target.value.value.id == 'self':
+                        target_name = f"{target.value.attr}.{target.attr}"
+                    else:
+                        return None
+                elif isinstance(target.value, py_ast.Name):
+                    if target.value.id == 'self':
+                        target_name = target.attr
+                    else:
+                        target_name = f"{target.value.id}.{target.attr}"
+                else:
+                    return None
+            else:
+                return None
+
             return IRStatement(
                 kind="assignment",
                 data={
-                    "target": node.targets[0].id,
+                    "target": target_name,
                     "value": self._parse_expression(node.value)
                 }
             )
-        elif isinstance(node, py_ast.Expr):
-            if isinstance(node.value, py_ast.Call):
+        elif isinstance(node, py_ast.Assert):
+            # Parse the assertion condition
+            condition = self._parse_expression(node.test)
+            # Check if this is a signer validation
+            is_signer_check = (
+                isinstance(condition, IRExpression) and
+                condition.kind == "binary_op" and
+                condition.data.get("op") == "==" and
+                isinstance(condition.data.get("right"), dict) and
+                condition.data.get("right", {}).get("data", {}).get("name") == "signer"
+            )
+            message = "signer validation required" if is_signer_check else "assertion failed"
+            
+            require_data = IRRequireData(
+                condition=condition,
+                message=message,
+                span=SpanData(node.lineno, node.col_offset)
+            )
+            return IRRequire(require_data)
+        elif isinstance(node, py_ast.Expr) and isinstance(node.value, py_ast.Call):
+            if isinstance(node.value.func, py_ast.Name) and node.value.func.id == 'require':
+                if len(node.value.args) != 2:
+                    raise ValueError("require() must have exactly 2 arguments: condition and message")
+                
+                require_data = IRRequireData(
+                    condition=self._parse_expression(node.value.args[0]),
+                    message=(node.value.args[1].value 
+                            if isinstance(node.value.args[1], py_ast.Constant)
+                            else self._parse_expression(node.value.args[1])),
+                    span=SpanData(node.lineno, node.col_offset)
+                )
+                return IRRequire(require_data)
+            elif isinstance(node.value.func, py_ast.Attribute):
                 return IRStatement(
                     kind="method_call",
                     data={
-                        "target": self._parse_expression(node.value.func),
+                        "target": self._parse_expression(node.value.func.value),
+                        "method": node.value.func.attr,
                         "args": [self._parse_expression(arg) for arg in node.value.args]
                     }
                 )
-        raise ValueError(f"Unsupported statement type: {type(node).__name__}")
+        return None
 
     def _parse_expression(self, node: py_ast.AST) -> IRExpression:
         """Parse expressions"""
         if isinstance(node, py_ast.Constant):
             return IRLiteral(node.value)
         elif isinstance(node, py_ast.Name):
+            if node.id == 'signer':
+                return IRVariable('signer')
             return IRVariable(node.id)
-        elif isinstance(node, py_ast.BinOp):
+        elif isinstance(node, py_ast.Attribute):
+            if isinstance(node.value, py_ast.Name):
+                base_name = node.value.id
+                if base_name == 'self' and node.attr == 'signer':
+                    return IRVariable('signer')
+                elif base_name == 'self':
+                    return IRVariable(node.attr)
+                elif base_name == 'signer':
+                    return IRVariable(f"signer.{node.attr}")
+                return IRVariable(f"{base_name}.{node.attr}")
+            elif isinstance(node.value, py_ast.Attribute):
+                if isinstance(node.value.value, py_ast.Name) and node.value.value.id == 'self':
+                    return IRVariable(f"{node.value.attr}.{node.attr}")
+        elif isinstance(node, py_ast.Compare):
+            if len(node.ops) != 1 or len(node.comparators) != 1:
+                raise ValueError("Only single comparisons are supported")
+            
             return IRBinaryOp(
-                self._get_op_symbol(node.op),
+                self._get_compare_op_symbol(node.ops[0]),
                 self._parse_expression(node.left),
-                self._parse_expression(node.right)
+                self._parse_expression(node.comparators[0])
             )
+        
         raise ValueError(f"Unsupported expression type: {type(node).__name__}")
 
-    def _get_op_symbol(self, op: py_ast.operator) -> str:
-        """Convert Python AST operators to string representation"""
+    def _get_compare_op_symbol(self, op: py_ast.cmpop) -> str:
+        """Convert Python AST comparison operators to string representation"""
         op_map = {
-            py_ast.Add: "+",
-            py_ast.Sub: "-",
-            py_ast.Mult: "*",
-            py_ast.Div: "/",
-            py_ast.Mod: "%",
-            py_ast.BitAnd: "&",
-            py_ast.BitOr: "|",
-            py_ast.BitXor: "^",
+            py_ast.Eq: "==",
+            py_ast.NotEq: "!=",
+            py_ast.Lt: "<",
+            py_ast.LtE: "<=",
+            py_ast.Gt: ">",
+            py_ast.GtE: ">=",
         }
         op_type = type(op)
         if op_type in op_map:
             return op_map[op_type]
-        raise ValueError(f"Unsupported operator: {op_type.__name__}")
+        raise ValueError(f"Unsupported comparison operator: {op_type.__name__}")
 
     def _get_type_name(self, annotation: py_ast.AST) -> str:
         """Convert Python type annotations to Solana type names"""
         if isinstance(annotation, py_ast.Name):
             return annotation.id
         elif isinstance(annotation, py_ast.Subscript):
-            # Handle generic types like List[int]
-            container = annotation.value.id
-            if container == "List":
-                element_type = self._get_type_name(annotation.slice)
-                return f"Vec<{element_type}>"
+            if isinstance(annotation.value, py_ast.Name):
+                container = annotation.value.id
+                if container in ('List', 'Vec'):
+                    element_type = self._get_type_name(annotation.slice)
+                    return f"Vec_{element_type}"
+                elif container == 'Option':
+                    element_type = self._get_type_name(annotation.slice)
+                    return f"Option_{element_type}"
         return "unknown"
+
+

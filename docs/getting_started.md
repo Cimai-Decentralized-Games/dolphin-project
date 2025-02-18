@@ -1,260 +1,225 @@
-```markdown
 # Getting Started with Dolphin
 
-Dolphin is a Python-to-Solana framework that allows you to write Solana programs using Python syntax or the specialized Dolphin Language (DL).
+## Overview
 
-## Installation
+Dolphin is a Python framework for developing Solana programs, providing a seamless experience for writing, testing, and deploying smart contracts. This guide will walk you through setting up your development environment and creating your first Dolphin program.
 
-### Prerequisites
+## Prerequisites
 
-- Python 3.7 or higher
-- Rust and Cargo
-- Solana CLI tools
-- Anchor Framework
+Before you begin, ensure you have the following installed:
 
 ```bash
-# Install Rust
+# Install Rust and Cargo
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Install Solana
+# Install Solana CLI tools
 sh -c "$(curl -sSfL https://release.solana.com/v1.17.0/install)"
 
-# Install Anchor
+# Install Anchor Framework
 cargo install --git https://github.com/coral-xyz/anchor avm --locked
 avm install latest
 avm use latest
 
-# Install Dolphin
+# Install Python 3.8 or higher
+# macOS
+brew install python@3.8
+
+# Ubuntu
+sudo apt-get install python3.8 python3.8-dev
+```
+
+## Installation
+
+Install Dolphin using pip:
+
+```bash
 pip install dolphin-framework
 ```
 
-## Basic Usage
+## Project Initialization
 
-### 1. Using Python Syntax
+Create a new Dolphin project:
 
-Create a new Solana program using Python decorators:
+```bash
+# Initialize a new project
+dolphin init my_program HeLLo777777777777777777777777777777777777777
+
+# Structure created:
+my_program/
+├── Cargo.toml          # Rust dependencies
+├── Anchor.toml         # Anchor configuration
+├── src/
+│   └── lib.rs         # Generated Rust program
+├── program/
+│   └── lib.py         # Your Python program
+├── tests/
+│   └── test_program.py
+└── client/            # JavaScript client
+    ├── package.json
+    └── src/
+        └── index.ts
+```
+
+## Writing Your First Program
+
+Edit `program/lib.py`:
 
 ```python
-from dolphin.prelude import 
+from dolphin.prelude import *
 
-@program("CounterProg111111111111111111111111111111111111")
-class CounterProgram:
+@program("HeLLo777777777777777777777777777777777777777")
+class HelloWorldProgram:
     @account
     class Counter:
         authority: Pubkey
         count: u64
-
+        
     @instruction
-    def initialize(self, authority: Pubkey):
-        self.counter.authority = authority
-        self.counter.count = 0
-
+    def initialize(
+        self,
+        counter: Counter,
+        authority: Signer,
+        system_program: Program = SYSTEM_PROGRAM_ID
+    ):
+        counter.authority = authority.key
+        counter.count = 0
+        
     @instruction
-    def increment(self):
-        assert self.counter.authority == self.signer, "Only authority can increment"
-        self.counter.count += 1
+    def increment(
+        self,
+        counter: Counter,
+        authority: Signer
+    ):
+        assert counter.authority == authority.key, "Invalid authority"
+        counter.count += 1
 ```
 
-### 2. Using Dolphin Language (DL)
-
-Alternatively, use the more concise DL syntax:
-
-```
-program Counter {
-    id: "CounterProg111111111111111111111111111111111111"
-    account Counter {
-        authority: pubkey
-        count: u64
-    }
-    ix initialize(authority: pubkey) {
-        @counter.authority = authority
-        @counter.count = 0
-    }
-    ix increment() {
-        require(@counter.authority == @signer, "Only authority can increment")
-        @counter.count += 1
-    }
-}
-```
-
-### 3. Building and Deploying
+## Building and Testing
 
 ```bash
 # Build your program
-dolphin build counter_program.py  # or counter_program.dl
+dolphin build
+
+# Run tests
+dolphin test
 
 # Deploy to devnet
 dolphin deploy --network devnet
-
-# Deploy to mainnet
-dolphin deploy --network mainnet-beta
 ```
 
-## Core Concepts
+## Program Structure
 
-### 1. Accounts
+### Accounts
 
-- Use `@account` decorator or `account` keyword in DL
-- Define account structure with typed fields
-- Support for PDAs using `@pda` decorator
-
-### 2. Instructions
-
-- Use `@instruction` decorator or `ix` keyword in DL
-- Define program logic
-- Automatic account validation
-
-### 3. Types
+Accounts store program state:
 
 ```python
-# Available types
-u8, u16, u32, u64     # Unsigned integers
-i8, i16, i32, i64     # Signed integers
-f32, f64             # Floating point (converted to fixed-point)
-bool                  # Boolean
-str                   # String
-Pubkey              # Solana public key
-List[T]             # Arrays/Vectors
-Optional[T]         # Optional values
+@account
+class GameState:
+    authority: Pubkey
+    score: u64
+    player_name: str
 ```
 
-### 4. Account Context
+### Instructions
+
+Instructions define program logic:
 
 ```python
 @instruction
-def transfer(self, amount: u64):
-    # Access accounts
-    self.from_account.balance -= amount
-    self.to_account.balance += amount
-    # Access signer
-    assert self.signer == self.from_account.owner
-    # Access program ID
-    program_id = self.program_id
+def update_score(
+    self,
+    state: GameState,
+    authority: Signer,
+    new_score: u64
+):
+    assert state.authority == authority.key, "Invalid authority"
+    state.score = new_score
 ```
 
-## Examples
+### Program Derived Addresses (PDAs)
 
-1.  Basic Counter Program: [examples/01\_basic\_program.py](../python/examples/01\_basic\_program.py)
-2.  Token Program: [examples/02\_token\_program.py](../python/examples/02\_token\_program.py)
-3.  NFT Marketplace: [examples/03\_nft\_marketplace.py](../python/examples/03\_nft\_marketplace.py)
-4.  Staking Program: [examples/04\_staking\_program.py](../python/examples/04\_staking\_program.py)
-5.  Multisig Wallet: [examples/05\_multisig\_wallet.py](../python/examples/05\_multisig\_wallet.py)
-6.  Using DL Syntax: [examples/06\_using\_dl\_syntax.py](../python/examples/06\_using\_dl\_syntax.py)
-
-## Best Practices
-
-### 1. Account Structure
-
-- Keep account data minimal
-- Use appropriate types for fields
-- Consider using PDAs for deterministic addresses
-
-### 2. Security
+Create deterministic addresses:
 
 ```python
-@instruction
-def withdraw(self, amount: u64):
-    # Always validate authority
-    assert self.account.authority == self.signer
-    # Check numerical operations
-    assert self.account.balance >= amount
-    # Update state after validation
-    self.account.balance -= amount
+@account
+@pda(seeds=["player", "game"])
+class PlayerState:
+    player: Pubkey
+    game: Pubkey
+    score: u64
 ```
 
-### 3. Error Handling
+## Development Workflow
 
-```python
-@instruction
-def process(self, data: u64):
-    # Use descriptive error messages
-    assert data > 0, "Data must be positive"
-    assert self.account.initialized, "Account not initialized"
-```
+1. **Write Program**: Create your program in Python using Dolphin decorators and types.
 
-### 4. Program Organization
+2. **Build**: Dolphin converts your Python code to Rust:
+   ```bash
+   dolphin build
+   ```
 
-- Group related accounts and instructions
-- Use meaningful names
-- Add comments for complex logic
-- Consider breaking large programs into modules
+3. **Test**: Write and run tests:
+   ```python
+   from dolphin.testing import ProgramTest
+   
+   async def test_counter():
+       program = await ProgramTest.load("program/lib.py")
+       counter = await program.create_account("Counter")
+       await program.initialize(counter=counter)
+       assert counter.count == 0
+   ```
+
+4. **Deploy**: Deploy to Solana:
+   ```bash
+   dolphin deploy --network devnet
+   ```
 
 ## Advanced Features
 
-### 1. Cross-Program Invocation (CPI)
+### Error Handling
+
+```python
+from dolphin.prelude import DolphinError
+
+class InsufficientBalanceError(DolphinError):
+    code = 6000
+    message = "Insufficient balance for operation"
+```
+
+### Cross-Program Invocation (CPI)
 
 ```python
 @instruction
-def transfer_tokens(self, amount: u64):
-    self.token_program.transfer(
-        from_account=self.sender,
-        to_account=self.receiver,
-        authority=self.signer,
+def transfer_tokens(
+    self,
+    source: TokenAccount,
+    destination: TokenAccount,
+    authority: Signer,
+    amount: u64,
+    token_program: Program = TOKEN_PROGRAM_ID
+):
+    token_program.transfer(
+        source=source,
+        destination=destination,
+        authority=authority,
         amount=amount
     )
 ```
 
-### 2. Program Derived Addresses (PDA)
+### Program Upgrades
 
-```python
-@account
-@pda("owner", "mint")
-class TokenAccount:
-    owner: Pubkey
-    mint: Pubkey
-    amount: u64
+```bash
+# Build with upgrade capability
+dolphin build --upgradeable
+
+# Deploy upgrade
+dolphin upgrade --program-id <PROGRAM_ID> --buffer <BUFFER_ADDRESS>
 ```
 
-### 3. Custom Types
+## Next Steps
 
-```python
-@dataclass
-class TradeDetails:
-    price: u64
-    quantity: u64
-    side: str  # "buy" or "sell"
-```
-
-## Debugging and Testing
-
-### 1. Local Testing
-
-```python
-from dolphin.testing import ProgramTest
-
-async def test_counter():
-    program = await ProgramTest.load("counter_program.py")
-    # Create test accounts
-    counter = await program.create_account("Counter")
-    authority = program.create_keypair()
-    # Test instructions
-    await program.initialize(authority=authority.pubkey())
-    assert counter.count == 0
-    await program.increment()
-    assert counter.count == 1
-```
-
-### 2. Error Codes
-
-Common error codes and their meanings:
-
-- 6000: Invalid Authority
-- 6001: Insufficient Funds
-- 6002: Account Not Initialized
-- 6003: Invalid Account Type
-
-## Resources
-
--   [Dolphin Documentation](https://docs.dolphin.dev)
--   [Solana Documentation](https://docs.solana.com)
--   [Anchor Documentation](https://anchor-lang.com)
--   [Discord Community](https://discord.gg/dolphin)
--   [GitHub Repository](https://github.com/dolphin-dev/dolphin)
-
-## Need Help?
-
-*   Join our [Discord](https://discord.gg/dolphin)
-*   Check our [FAQ](./faq.md)
-*   Open an issue on [GitHub](https://github.com/dolphin-dev/dolphin/issues)
-```
-
+- Explore the [API Reference](api_reference.md)
+- Check out [Example Programs](../examples/)
+- Join our [Discord Community](https://discord.gg/dolphin)
+- Read the [Contributing Guide](../CONTRIBUTING.md)

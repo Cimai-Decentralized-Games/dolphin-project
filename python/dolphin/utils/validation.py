@@ -1,5 +1,5 @@
 from typing import Optional, List
-from dolphin.native import validation  # This imports our Rust validation module via PyO3
+from dolphin import validation  # This imports our Rust validation module via PyO3
 
 def validate_address(address: str) -> bool:
     """

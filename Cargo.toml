@@ -10,8 +10,8 @@ name = "dolphin"
 crate-type = ["cdylib", "rlib"]
 
 [[test]]
-name = "test_borsh_account"
-path = "tests/rust/test_borsh_account.rs"
+name = "test_pda"
+path = "tests/unit/rust/test_pda.rs"
 
 [dependencies]
 pyo3 = { version = "0.23.4", features = ["extension-module"] }

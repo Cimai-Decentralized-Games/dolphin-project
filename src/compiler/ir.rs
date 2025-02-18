@@ -1,4 +1,4 @@
-//src/comiler/ir.rs
+//src/compiler/ir.rs
 use serde::{Deserialize, Serialize};
 use pyo3::prelude::*;
 
@@ -57,11 +57,40 @@ pub struct Statement {
     pub span: Span,
 }
 
+#[pyclass(module = "dolphin.compiler.ir")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequireData {
+    #[pyo3(get)]
+    pub condition: Expression,
+    #[pyo3(get)]
+    pub message: String,
+    #[pyo3(get)]
+    pub span: SpanData,
+}
+
+#[pyclass(module = "dolphin.compiler.ir")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpanData {
+    #[pyo3(get)]
+    pub line: u32,
+    #[pyo3(get)]
+    pub column: u32,
+}
 #[pyclass]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StatementKind {
-    Assignment { target: String, value: Expression },
-    MethodCall { target: String, method: String, args: Vec<Expression> },
+    Assignment { 
+        target: String, 
+        value: Expression 
+    },
+    MethodCall { 
+        target: String, 
+        method: String, 
+        args: Vec<Expression> 
+    },
+    require { 
+        data: RequireData 
+    }
 }
 
 #[pyclass]
@@ -252,6 +281,17 @@ impl StatementKind {
     fn method_call(target: String, method: String, args: Vec<Expression>) -> Self {
         StatementKind::MethodCall { target, method, args }
     }
+
+    #[staticmethod]
+fn require(condition: Expression, message: String, span: SpanData) -> Self {
+    StatementKind::require { 
+        data: RequireData {
+            condition,
+            message,
+            span,
+        }
+    }
+}
 }
 
 // #[pymethods]
@@ -275,6 +315,29 @@ impl StatementKind {
 //         }
 //     }
 // }
+
+#[pymethods]
+impl RequireData {
+    #[new]
+    fn new(condition: Expression, message: String, span: SpanData) -> Self {
+        RequireData {
+            condition,
+            message,
+            span,
+        }
+    }
+}
+
+#[pymethods]
+impl SpanData {
+    #[new]
+    fn new(line: u32, column: u32) -> Self {
+        SpanData {
+            line,
+            column,
+        }
+    }
+}
 
 #[pymethods]
 impl Literal {
