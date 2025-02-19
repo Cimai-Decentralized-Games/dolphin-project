@@ -1,48 +1,30 @@
-#tests/conftest.py
 import pytest
 import asyncio
 import os
 import shutil
+import subprocess
 from pathlib import Path
-from typing import Generator, AsyncGenerator, NamedTuple
-from dolphin.parser import SolanaParser
-from dolphin.compiler import compile_program, CompilerConfig
+from dolphin.ir_gen import IRGenerator
+from dolphin import DolphinCompiler
+from dolphin.core.types import SolanaType
 
 # Constants for test configuration
-TEST_RPC_URL = "http://localhost:8899"
 TEST_DIR = Path(__file__).parent
 TEST_PROGRAMS_DIR = TEST_DIR / "test_programs"
 TEST_OUTPUT_DIR = TEST_DIR / "test_output"
 EXAMPLE_PROGRAM_ID = "Test999999999999999999999999999999999999999"
-
-# Create a custom KeyPair class to maintain similar interface
-class KeyPair(NamedTuple):
-    public_key: bytes
-    private_key: bytes
-    signing_key: nacl.signing.SigningKey
-    
-    @classmethod
-    def generate(cls) -> 'KeyPair':
-        signing_key = nacl.signing.SigningKey.generate()
-        verify_key = signing_key.verify_key
-        return cls(
-            public_key=verify_key.encode(),
-            private_key=signing_key.encode(),
-            signing_key=signing_key
-        )
-    
-    def sign(self, message: bytes) -> bytes:
-        return self.signing_key.sign(message).signature
+SOLANA_NETWORK = "devnet"  # Use devnet by default
+SOLANA_RPC_URL = "https://api.devnet.solana.com"
 
 @pytest.fixture(scope="session")
-def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
+def event_loop():
     """Create and provide an event loop for async tests."""
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
 
 @pytest.fixture(scope="session")
-def test_dirs() -> Generator[tuple[Path, Path], None, None]:
+def test_dirs():
     """Create and cleanup test directories."""
     TEST_PROGRAMS_DIR.mkdir(exist_ok=True)
     TEST_OUTPUT_DIR.mkdir(exist_ok=True)
@@ -54,20 +36,8 @@ def test_dirs() -> Generator[tuple[Path, Path], None, None]:
     if TEST_PROGRAMS_DIR.exists():
         shutil.rmtree(TEST_PROGRAMS_DIR)
 
-@pytest.fixture(scope="session")
-def solana_client():
-    """Provide a Solana test client."""
-    return SolanaTestClient()
-
-@pytest.fixture(scope="session")
-def funded_keypair(solana_client):
-    """Provide a funded keypair for tests."""
-    keypair = solana_client.create_keypair()
-    solana_client.request_airdrop(keypair["publicKey"])
-    return keypair
-
 @pytest.fixture
-def example_program_py() -> str:
+def example_program_py():
     """Provide example Python program content."""
     return f"""
 from dolphin.prelude import *
@@ -91,99 +61,66 @@ class ExampleProgram:
 """
 
 @pytest.fixture
-def example_program_dl() -> str:
-    """Provide example Dolphin Language program content."""
-    return f"""
-program ExampleProgram {{
-    id: "{EXAMPLE_PROGRAM_ID}"
-    
-    account Counter {{
-        authority: pubkey
-        count: u64
-    }}
-    
-    ix initialize(authority: pubkey) {{
-        @counter.authority = authority
-        @counter.count = 0
-    }}
-    
-    ix increment() {{
-        require(@counter.authority == @signer)
-        @counter.count += 1
-    }}
-}}
-"""
+def ir_generator(example_program_py):
+    """Create IRGenerator instance with example program."""
+    return IRGenerator(example_program_py)
 
-@pytest.fixture
-def compiler_config() -> CompilerConfig:
-    """Provide default compiler configuration."""
-    return CompilerConfig(
-        optimize=True,
-        debug_symbols=True,
-        target="bpf-unknown-unknown",
-        features=[]
-    )
-
-@pytest.fixture
-async def deployed_program(
-    solana_client: AsyncClient,
-    funded_payer: Keypair,
-    example_program_py: str,
-    test_dirs: tuple[Path, Path],
-    compiler_config: CompilerConfig
-) -> AsyncGenerator[str, None]:
-    """Deploy a program and return its ID."""
-    programs_dir, output_dir = test_dirs
-    program_path = programs_dir / "example_program.py"
-    program_path.write_text(example_program_py)
-    
-    # Parse and compile
-    parser = SolanaParser(program_path.read_text())
-    ir = parser.parse()
-    compilation_result = compile_program(
-        ir,
-        config=compiler_config,
-        output_dir=output_dir
+@pytest.fixture(scope="session")
+def solana_config():
+    """Configure Solana CLI to use devnet."""
+    # Set Solana config to use devnet
+    subprocess.run(
+        ["solana", "config", "set", "--url", SOLANA_RPC_URL],
+        check=True,
+        capture_output=True
     )
     
-    # Deploy
-    deployer = ProgramDeployer(
-        solana_client,
-        funded_payer,
-        compilation_result.output_dir
-    )
-    
-    deployment_result = await deployer.deploy()
-    yield deployment_result.program_id
-
-@pytest.fixture
-def create_test_program():
-    """Helper fixture to create test program files."""
-    def _create_program(filename: str, content: str) -> Path:
-        path = TEST_PROGRAMS_DIR / filename
-        path.write_text(content)
-        return path
-    return _create_program
-
-@pytest.fixture
-def parse_and_compile():
-    """Helper fixture to parse and compile programs."""
-    def _parse_and_compile(
-        program_path: Path,
-        config: CompilerConfig = None
-    ):
-        if program_path.suffix == '.py':
-            parser = SolanaParser(program_path.read_text())
-        else:
-            parser = DLParser(program_path.read_text())
-            
-        ir = parser.parse()
-        return compile_program(
-            ir,
-            config=config or CompilerConfig(),
-            output_dir=TEST_OUTPUT_DIR
+    # Verify connection
+    try:
+        result = subprocess.run(
+            ["solana", "cluster-version"],
+            check=True,
+            capture_output=True,
+            text=True
         )
-    return _parse_and_compile
+        print(f"Connected to Solana {SOLANA_NETWORK}, version: {result.stdout.strip()}")
+    except subprocess.CalledProcessError as e:
+        pytest.skip(f"Could not connect to Solana {SOLANA_NETWORK}: {e.stderr}")
+
+@pytest.fixture(scope="session")
+def funded_keypair(solana_config):
+    """Create and fund a test keypair on devnet."""
+    # Generate new keypair
+    keypair_path = TEST_DIR / "test-keypair.json"
+    subprocess.run(
+        ["solana-keygen", "new", "--no-bip39-passphrase", "-o", str(keypair_path)],
+        check=True,
+        capture_output=True
+    )
+    
+    # Get public key
+    pubkey = subprocess.run(
+        ["solana-keygen", "pubkey", str(keypair_path)],
+        check=True,
+        capture_output=True,
+        text=True
+    ).stdout.strip()
+    
+    # Request airdrop
+    try:
+        subprocess.run(
+            ["solana", "airdrop", "2", pubkey, "--url", SOLANA_RPC_URL],
+            check=True,
+            capture_output=True
+        )
+    except subprocess.CalledProcessError as e:
+        pytest.skip(f"Failed to get airdrop on {SOLANA_NETWORK}: {e.stderr}")
+    
+    yield {"path": str(keypair_path), "pubkey": pubkey}
+    
+    # Cleanup
+    if keypair_path.exists():
+        keypair_path.unlink()
 
 # Custom markers
 def pytest_configure(config):
@@ -194,52 +131,23 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "requires_validator: mark test as requiring a running Solana validator"
+        "requires_network: mark test as requiring Solana network connection"
     )
 
-@pytest.fixture
-def mock_validator(monkeypatch):
-    """Mock Solana validator responses for tests."""
-    class MockValidator:
-        async def get_account_info(self, pubkey):
-            return {"lamports": 1000000, "executable": True}
-            
-        async def request_airdrop(self, pubkey, amount):
-            return "transaction_signature"
-    
-    monkeypatch.setattr(
-        "solana.rpc.async_api.AsyncClient",
-        lambda _: MockValidator()
-    )
-
-@pytest.fixture
-def assert_program_structure():
-    """Helper fixture to assert program structure."""
-    def _assert_structure(program_path: Path, expected_structure: dict):
-        if program_path.suffix == '.py':
-            parser = SolanaParser(program_path.read_text())
-        else:
-            parser = DLParser(program_path.read_text())
-            
-        ir = parser.parse()
+@pytest.fixture(autouse=True)
+def check_test_requirements(request):
+    """Check test requirements based on markers."""
+    # Skip network check for IR generation tests
+    if "test_ir_gen" in str(request.node.fspath):
+        return
         
-        assert ir.name == expected_structure.get('name')
-        assert ir.program_id == expected_structure.get('program_id')
-        
-        if 'accounts' in expected_structure:
-            assert len(ir.accounts) == len(expected_structure['accounts'])
-            
-        if 'instructions' in expected_structure:
-            assert len(ir.instructions) == len(expected_structure['instructions'])
-    
-    return _assert_structure
-
-# Environment setup helpers
-@pytest.fixture(scope="session", autouse=True)
-def setup_test_environment():
-    """Setup test environment variables."""
-    os.environ["DOLPHIN_TEST_MODE"] = "1"
-    os.environ["SOLANA_NETWORK"] = "devnet"
-    yield
-    del os.environ["DOLPHIN_TEST_MODE"]
-    del os.environ["SOLANA_NETWORK"]
+    # For tests that need network connection
+    if request.node.get_closest_marker('requires_network'):
+        try:
+            subprocess.run(
+                ["solana", "cluster-version", "--url", SOLANA_RPC_URL],
+                check=True,
+                capture_output=True
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pytest.skip(f"Could not connect to Solana {SOLANA_NETWORK}")

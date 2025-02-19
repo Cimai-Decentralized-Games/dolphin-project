@@ -144,7 +144,7 @@ fn generate_instruction_body(statements: &[Statement]) -> String {
                     .join(", ");
                 code.push_str(&format!("    {}.{}({});\n", target, method, args_str));
             }
-            StatementKind::require { data } => {
+            StatementKind::Require { data } => {
                 // Extract span information from the RequireData struct
                 let line = data.span.line;
                 let column = data.span.column;
@@ -182,6 +182,13 @@ fn generate_expression(expr: &Expression) -> String {
                 op, 
                 generate_expression(right)
             )
+        },
+        ExpressionKind::List(elements) => {
+            let elements_str = elements.iter()
+                .map(generate_expression)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("[{}]", elements_str)
         },
     }
 }

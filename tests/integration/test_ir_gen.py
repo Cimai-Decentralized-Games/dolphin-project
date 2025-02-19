@@ -124,7 +124,7 @@ def test_pda_handling(ir_generator):
     @program("Test111111111111111111111111111111111111111")
     class TestProgram:
         @account
-        @pda("authority", "seed")
+        @pda(seeds=["authority", "seed"])
         class Counter:
             authority: Pubkey
             seed: str
@@ -135,10 +135,18 @@ def test_pda_handling(ir_generator):
     program = ir_generator.generate()
     counter_account = program.accounts[0]
     
-    assert counter_account.is_pda
-    assert counter_account.discriminator == "counter_type"
-    assert "authority" in counter_account.seeds
-    assert "seed" in counter_account.seeds
+    print("\nDebug - PDA Account Details:")
+    print(f"Account Name: {counter_account.name}")
+    print(f"Is PDA: {counter_account.is_pda}")
+    print(f"Discriminator: {counter_account.discriminator}")
+    print(f"Seeds: {counter_account.seeds}")
+    print(f"Fields: {[f'{f.name}: {f.type_name}' for f in counter_account.fields]}")
+
+    assert counter_account.is_pda, "Account should be marked as PDA"
+    assert counter_account.discriminator == "counter_type", "Incorrect discriminator"
+    # Check for variable references in seeds (without quotes)
+    assert any(seed == "authority" for seed in counter_account.seeds), f"Authority seed not found in seeds: {counter_account.seeds}"
+    assert any(seed == "seed" for seed in counter_account.seeds), f"Seed not found in seeds: {counter_account.seeds}"
 
 def test_complex_type_handling():
     """Test handling of complex types (Vec, Option)"""

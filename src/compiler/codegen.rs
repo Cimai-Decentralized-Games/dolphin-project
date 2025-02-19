@@ -1,4 +1,3 @@
-// src/compiler/codegen.rs
 use super::ir::{
     IR, Instruction, Account, Statement, Expression, StatementKind,
     RequireData, ExpressionKind, Literal, CustomType
@@ -62,29 +61,106 @@ pub mod {} {{
         
         // Generate account attributes
         code.push_str("    #[account]\n");
+        code.push_str("    #[derive(Default)]\n");
         if account.is_pda {
-            let seeds = account.seeds.join(", ");
-            code.push_str(&format!("    #[derive(Default)]\n"));
-            code.push_str(&format!("    #[seeds({})]\n", seeds));
+            // Generate seeds attribute
+            let seeds = account.seeds.iter()
+                .map(|seed| {
+                    if seed.starts_with('"') && seed.ends_with('"') {
+                        // For string literals, format as byte string
+                        let inner = &seed[1..seed.len()-1]; // Remove outer quotes
+                        format!("b\"{}\"", inner)
+                    } else {
+                        // For variables, use as_ref() for Pubkey references
+                        format!("{}.as_ref()", seed)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            code.push_str(&format!("    #[seeds = [{}]]\n", seeds));
+            
+            // Add bump attribute for PDA accounts
+            code.push_str("    #[bump]\n");
         }
         
         // Generate struct
         code.push_str(&format!("    pub struct {} {{\n", account.name));
         
-        // Generate fields
-        for field in &account.fields {
-            let attrs = if !field.attributes.is_empty() {
-                format!("        {}\n", field.attributes.join(" "))
-            } else {
-                String::new()
-            };
-            code.push_str(&format!("{}        pub {}: {},\n", 
-                attrs, field.name, field.ty));
+        // Generate fields in correct order for PDA accounts
+        if account.is_pda {
+            // First generate the fields used as seeds
+            for seed in &account.seeds {
+                if !seed.starts_with('"') {
+                    // This is a field reference, find its type
+                    if let Some(field) = account.fields.iter().find(|f| f.name == *seed) {
+                        let attrs = if !field.attributes.is_empty() {
+                            format!("        {}\n", field.attributes.join(" "))
+                        } else {
+                            String::new()
+                        };
+                        code.push_str(&format!("{}        pub {}: {},\n", 
+                            attrs, field.name, field.ty));
+                    }
+                }
+            }
+            
+            // Then generate bump
+            code.push_str("        /// The bump used to generate the PDA\n");
+            code.push_str("        pub bump: u8,\n");
+            
+            // Then generate remaining fields that weren't used as seeds
+            for field in &account.fields {
+                if !account.seeds.iter().any(|seed| !seed.starts_with('"') && *seed == field.name) {
+                    let attrs = if !field.attributes.is_empty() {
+                        format!("        {}\n", field.attributes.join(" "))
+                    } else {
+                        String::new()
+                    };
+                    code.push_str(&format!("{}        pub {}: {},\n", 
+                        attrs, field.name, field.ty));
+                }
+            }
+        } else {
+            // For non-PDA accounts, generate fields in original order
+            for field in &account.fields {
+                let attrs = if !field.attributes.is_empty() {
+                    format!("        {}\n", field.attributes.join(" "))
+                } else {
+                    String::new()
+                };
+                code.push_str(&format!("{}        pub {}: {},\n", 
+                    attrs, field.name, field.ty));
+            }
         }
         
         code.push_str("    }\n\n");
+        if account.is_pda {
+            code.push_str(&format!("    impl {} {{\n", account.name));
+            code.push_str("        /// Generates the PDA for this account\n");
+            code.push_str("        pub fn generate_pda(\n");
+            code.push_str("            &self,\n");
+            code.push_str("            program_id: &Pubkey,\n");
+            code.push_str("        ) -> Result<(Pubkey, u8)> {\n");
+            code.push_str("            let seeds: &[&[u8]] = &[\n");
+            for seed in &account.seeds {
+                if seed.starts_with('"') && seed.ends_with('"') {
+                    // String literals become byte strings
+                    let inner = &seed[1..seed.len()-1];
+                    code.push_str(&format!("                b\"{}\",\n", inner));
+                } else {
+                    // Field references use to_bytes()
+                    code.push_str(&format!("                &self.{}.to_bytes(),\n", seed));
+                }
+            }
+            code.push_str("                &[self.bump],\n");  // Add bump as final seed
+            code.push_str("            ];\n");
+            code.push_str("            Pubkey::find_program_address(seeds, program_id)\n");
+            code.push_str("        }\n");
+            code.push_str("    }\n\n");
+        }
         code
     }
+    
 
     fn generate_instruction(&self, instruction: &Instruction) -> String {
         let mut code = String::new();
@@ -116,7 +192,7 @@ pub mod {} {{
     fn generate_statement(&self, stmt: &Statement) -> String {
         let indent = "        ";
         match &stmt.kind {
-            StatementKind::require { data } => {
+            StatementKind::Require { data } => {
                 self.generate_require(data)
             },
             StatementKind::Assignment { target, value } => {
@@ -160,6 +236,13 @@ pub mod {} {{
                     op,
                     self.generate_expression(right)
                 )
+            },
+            ExpressionKind::List(elements) => {
+                let elements_str = elements.iter()
+                    .map(|elem| self.generate_expression(elem))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("[{}]", elements_str)
             }
         }
     }
@@ -169,14 +252,14 @@ pub mod {} {{
             Literal::Integer(n) => n.to_string(),
             Literal::Float(f) => f.to_string(),
             Literal::String(s) => format!("\"{}\"", s),
-            Literal::Boolean(b) => b.to_string()
+            Literal::Boolean(b) => b.to_string(),
         }
     }
 
     fn generate_instruction_context(&self, instruction: &Instruction) -> String {
         let mut code = String::new();
         
-        code.push_str(&format!("    #[derive(Accounts)]\n"));
+        code.push_str("    #[derive(Accounts)]\n");
         code.push_str(&format!("    pub struct {} {{\n", instruction.name));
         
         // Generate account fields
@@ -190,13 +273,13 @@ pub mod {} {{
             }
             
             let attr_str = if !attrs.is_empty() {
-                format!("#[account({})]\n        ", attrs.join(", "))
+                format!("        #[account({})]\n", attrs.join(", "))
             } else {
                 String::new()
             };
             
-            code.push_str(&format!("    {}", attr_str));
-            code.push_str(&format!("    pub {}: Account<'info, {}>,\n",
+            code.push_str(&attr_str);
+            code.push_str(&format!("        pub {}: Account<'info, {}>,\n",
                 account.name,
                 account.account_type
             ));

@@ -17,11 +17,89 @@ features = ["pyo3/extension-module"]
 module-name = "dolphin"
 python-source = "python"
 python-packages = ["dolphin"]
+profile = "release"
+strip = true
+sdist-include = ["Cargo.toml", "Cargo.lock", "src/**/*", "python/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test"]
+python_functions = ["test_*"]
+addopts = "--cov=dolphin --cov-report=term-missing"
 markers = [
     "integration: marks tests as integration tests",
+    "requires_validator: marks tests requiring a Solana validator",
 ]
 
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
 
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+line_length = 88
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = [
+    "solana.*",
+    "anchorpy.*",
+    "construct.*",
+    "borsh_construct.*",
+]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["dolphin"]
+omit = ["tests/*", "setup.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "pass",
+    "raise ImportError",
+]
+
+[tool.tox]
+legacy_tox_ini = """
+[tox]
+envlist = py38, py39, py310, py311
+isolated_build = True
+
+[testenv]
+deps =
+    pytest>=7.0
+    pytest-asyncio
+    pytest-cov
+    solana
+    anchorpy
+    base58
+commands =
+    pytest {posargs:tests} --cov=dolphin --cov-report=term-missing
+
+[pytest]
+asyncio_mode = auto
+"""

@@ -2,73 +2,21 @@
 use serde::{Deserialize, Serialize};
 use pyo3::prelude::*;
 
+// Forward declarations
+#[pyclass]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IR {
-    pub program_id: String,
-    pub program_name: String,
-    pub program_version: String,
-    pub instructions: Vec<Instruction>,
-    pub accounts: Vec<Account>,
-    pub types: Vec<CustomType>,
+pub struct Span {
+    #[pyo3(get, set)]
+    pub start: usize,
+    #[pyo3(get, set)]
+    pub end: usize,
+    #[pyo3(get, set)]
+    pub line: usize,
+    #[pyo3(get, set)]
+    pub column: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Instruction {
-    pub name: String,
-    pub arguments: Vec<InstructionArgument>,
-    pub accounts: Vec<AccountUsage>,
-    pub body: Vec<Statement>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Account {
-    pub name: String,
-    pub fields: Vec<AccountField>,
-    pub is_program_owned: bool,
-    pub is_pda: bool,
-    pub seeds: Vec<String>,
-    pub discriminator: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AccountUsage {
-    pub name: String,
-    pub is_mutable: bool,
-    pub is_signer: bool,
-    pub account_type: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AccountField {
-    pub name: String,
-    pub ty: String,
-    pub attributes: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InstructionArgument {
-    pub name: String,
-    pub ty: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, FromPyObject)]
-pub struct Statement {
-    pub kind: StatementKind,
-    pub span: Span,
-}
-
-#[pyclass(module = "dolphin.compiler.ir")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RequireData {
-    #[pyo3(get)]
-    pub condition: Expression,
-    #[pyo3(get)]
-    pub message: String,
-    #[pyo3(get)]
-    pub span: SpanData,
-}
-
-#[pyclass(module = "dolphin.compiler.ir")]
+#[pyclass]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpanData {
     #[pyo3(get)]
@@ -76,21 +24,14 @@ pub struct SpanData {
     #[pyo3(get)]
     pub column: u32,
 }
+
 #[pyclass]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum StatementKind {
-    Assignment { 
-        target: String, 
-        value: Expression 
-    },
-    MethodCall { 
-        target: String, 
-        method: String, 
-        args: Vec<Expression> 
-    },
-    require { 
-        data: RequireData 
-    }
+pub enum Literal {
+    Integer(i64),
+    Float(f64),
+    String(String),
+    Boolean(bool),
 }
 
 #[pyclass]
@@ -105,34 +46,105 @@ pub enum ExpressionKind {
     Literal(Literal),
     Variable(String),
     BinaryOp { op: String, left: Box<Expression>, right: Box<Expression> },
+    List(Vec<Expression>),
+}
+
+impl ExpressionKind {
+    pub fn as_list(&self) -> Option<&Vec<Expression>> {
+        match self {
+            ExpressionKind::List(elements) => Some(elements),
+            _ => None,
+        }
+    }
+}
+
+#[pyclass(module = "dolphin.compiler.ir")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequireData {
+    #[pyo3(get)]
+    pub condition: Expression,
+    #[pyo3(get)]
+    pub message: String,
+    #[pyo3(get)]
+    pub span: SpanData,
 }
 
 #[pyclass]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Literal {
-    Integer(i64),
-    Float(f64),
-    String(String),
-    Boolean(bool),
+pub enum StatementKind {
+    Assignment { 
+        target: String, 
+        value: Expression 
+    },
+    MethodCall { 
+        target: String, 
+        method: String, 
+        args: Vec<Expression> 
+    },
+    Require {  // PascalCase
+        data: RequireData 
+    }
 }
 
-#[pyclass]
+#[derive(Debug, Clone, Serialize, Deserialize, FromPyObject)]
+pub struct Statement {
+    pub kind: StatementKind,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Span {
-    #[pyo3(get, set)]
-    pub start: usize,
-    #[pyo3(get, set)]
-    pub end: usize,
-    #[pyo3(get, set)]
-    pub line: usize,
-    #[pyo3(get, set)]
-    pub column: usize,
+pub struct AccountField {
+    pub name: String,
+    pub ty: String,
+    pub attributes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountUsage {
+    pub name: String,
+    pub is_mutable: bool,
+    pub is_signer: bool,
+    pub account_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstructionArgument {
+    pub name: String,
+    pub ty: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Account {
+    pub name: String,
+    pub fields: Vec<AccountField>,
+    pub is_program_owned: bool,
+    pub is_pda: bool,
+    pub seeds: Vec<String>,
+    pub discriminator: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Instruction {
+    pub name: String,
+    pub arguments: Vec<InstructionArgument>,
+    pub accounts: Vec<AccountUsage>,
+    pub body: Vec<Statement>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CustomType {
     pub name: String,
     pub variants: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IR {
+    pub program_id: String,
+    pub program_name: String,
+    pub program_version: String,
+    pub instructions: Vec<Instruction>,
+    pub accounts: Vec<Account>,
+    pub types: Vec<CustomType>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,6 +163,7 @@ pub enum InstructionReturnType {
     Custom(String),
 }
 
+// Implementations
 impl IR {
     pub fn new(program_id: String, program_name: String) -> Self {
         IR {
@@ -251,15 +264,14 @@ impl From<&crate::compiler::generator::instructions::InstructionDefinition> for 
             arguments: py_instruction.arguments.iter().map(InstructionArgument::from).collect(),
             accounts: py_instruction.accounts.iter().map(|account_str| AccountUsage {
                 name: account_str.clone(),
-                is_mutable: false, // Default values
-                is_signer: false,  // Default values
-                account_type: "Account".to_string(), // Default account type
+                is_mutable: false,
+                is_signer: false,
+                account_type: "Account".to_string(),
             }).collect(),
             body: Vec::new(),
         }
     }
 }
-
 
 impl From<&crate::compiler::generator::instructions::InstructionArgument> for InstructionArgument {
     fn from(py_arg: &crate::compiler::generator::instructions::InstructionArgument) -> Self {
@@ -283,38 +295,16 @@ impl StatementKind {
     }
 
     #[staticmethod]
-fn require(condition: Expression, message: String, span: SpanData) -> Self {
-    StatementKind::require { 
-        data: RequireData {
-            condition,
-            message,
-            span,
+    fn require(condition: Expression, message: String, span: SpanData) -> Self {
+        StatementKind::Require {  // PascalCase
+            data: RequireData {
+                condition,
+                message,
+                span,
+            }
         }
     }
 }
-}
-
-// #[pymethods]
-// impl ExpressionKind {
-//     #[new]
-//     fn new_literal(lit: Literal) -> Self {
-//         ExpressionKind::Literal(lit)
-//     }
-
-//     #[staticmethod]
-//     fn variable(name: String) -> Self {
-//         ExpressionKind::Variable(name)
-//     }
-
-//     #[staticmethod]
-//     fn binary_op(op: String, left: Expression, right: Expression) -> Self {
-//         ExpressionKind::BinaryOp {
-//             op,
-//             left: Box::new(left),
-//             right: Box::new(right),
-//         }
-//     }
-// }
 
 #[pymethods]
 impl RequireData {

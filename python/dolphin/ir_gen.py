@@ -1,6 +1,8 @@
 from pathlib import Path 
 from typing import Dict, List, Optional, Union, Any
 import json
+import subprocess
+import shutil
 from dataclasses import asdict
 
 from .parser import SolanaParser
@@ -12,9 +14,10 @@ from .ir import (
     IRProgram, IRAccount, IRInstruction, IRField,
     IRArgument, IRAccountUsage, IRStatement, IRRequire,
     IRExpression, IRLiteral, IRVariable, IRBinaryOp,
-    IRRequireData, SpanData, IRMethodCall,
+    IRRequireData, SpanData, IRMethodCall, IRList,
     to_json
 )
+from .templates import read_template, TEMPLATES
 
 class IRGenerator:
     """IR Generator that creates intermediate representation for Dolphin programs"""
@@ -64,10 +67,38 @@ class IRGenerator:
             discriminator=account.discriminator
         )
         
-        # Add default discriminator if PDA
-        if account_def.is_pda and not account_def.discriminator:
-            account_def.discriminator = f"{account_def.name.lower()}_type"
-            account.discriminator = account_def.discriminator
+        # Ensure seeds are properly formatted
+        if account.seeds:
+            processed_seeds = []
+            for seed in account.seeds:
+                if isinstance(seed, str):
+                    if seed.startswith('"') and seed.endswith('"'):
+                        # String literal seed
+                        processed_seeds.append(seed)
+                    else:
+                        # Variable reference seed
+                        processed_seeds.append(seed)
+                else:
+                    # Handle other types of seeds
+                    processed_seeds.append(str(seed))
+            account.seeds = processed_seeds
+        
+        # Handle PDA configuration
+        if account.is_pda:
+            # Add default discriminator
+            if not account_def.discriminator:
+                account_def.discriminator = f"{account_def.name.lower()}_type"
+                account.discriminator = account_def.discriminator
+            
+            # Process PDA seeds
+            if account.seeds:
+                # Debug output
+                print(f"\nProcessed PDA seeds for {account.name}:")
+                for seed in account.seeds:
+                    if isinstance(seed, IRLiteral):
+                        print(f"  String literal: {seed.data['value']}")
+                    elif isinstance(seed, IRVariable):
+                        print(f"  Variable reference: {seed.data['name']}")
             
         # Validate and normalize field types
         for field, ir_field in zip(account_def.fields, account.fields):
@@ -109,37 +140,46 @@ class IRGenerator:
         
     def _process_statement(self, stmt: IRStatement) -> Optional[IRStatement]:
         """Process individual statements"""
-        if stmt.kind == "require":
+        if stmt.kind == "Require":
             return self._process_require(stmt)
-        elif stmt.kind == "assignment":
+        elif stmt.kind == "Assignment":
             return self._process_assignment(stmt)
-        elif stmt.kind == "method_call":
+        elif stmt.kind == "MethodCall":
             return self._process_method_call(stmt)
         return stmt
 
     def _process_assignment(self, stmt: IRStatement) -> IRStatement:
         """Process assignment statements"""
         return IRStatement(
-            kind="assignment",
+            kind="Assignment",
             data={
-                "target": stmt.data["target"],
-                "value": self._process_expression(stmt.data["value"])
+                "target": stmt.data.get("target", ""),
+                "value": self._process_expression(stmt.data.get("value", {}))
             }
         )
         
     def _process_require(self, stmt: IRStatement) -> IRStatement:
         """Process require statements"""
-        require_data = stmt.data
-        processed_data = IRRequireData(
-            condition=self._process_expression(require_data["condition"]),
-            message=require_data["message"],
-            span=SpanData(
-                line=require_data.get("span", {}).get("line", 0),
-                column=require_data.get("span", {}).get("column", 0)
+        require_data = stmt.data.get("data", {})
+        # Extract span data safely
+        span_data = require_data.get("span", {})
+        if isinstance(span_data, SpanData):
+            span = span_data
+        elif isinstance(span_data, dict):
+            span = SpanData(
+                line=span_data.get("line", 0),
+                column=span_data.get("column", 0)
             )
+        else:
+            span = SpanData(0, 0)
+
+        processed_data = IRRequireData(
+            condition=self._process_expression(require_data.get("condition", {})),
+            message=require_data.get("message", "assertion failed"),
+            span=span
         )
         return IRRequire(processed_data)
-        
+            
     def _process_method_call(self, stmt: IRStatement) -> IRStatement:
         """Process method call statements"""
         call_data = stmt.data
@@ -155,17 +195,39 @@ class IRGenerator:
     def _process_expression(self, expr: Union[IRExpression, Dict]) -> IRExpression:
         """Process expressions"""
         if isinstance(expr, dict):
-            if expr.get("kind") == "literal":
-                return IRLiteral(expr["data"]["value"])
-            elif expr.get("kind") == "variable":
-                return IRVariable(expr["data"]["name"])
-            elif expr.get("kind") == "binary_op":
-                return IRBinaryOp(
-                    expr["data"]["op"],
-                    self._process_expression(expr["data"]["left"]),
-                    self._process_expression(expr["data"]["right"])
-                )
-        return expr
+            # Handle nested kind structure which is the standard format
+            kind_data = expr.get("kind", {})
+            if isinstance(kind_data, dict):
+                # Handle Rust's Literal enum variants
+                if any(variant in kind_data for variant in ("Integer", "Float", "String", "Boolean")):
+                    variant, value = next(iter(kind_data.items()))
+                    return IRLiteral(value)
+                elif "Variable" in kind_data:
+                    return IRVariable(kind_data["Variable"])
+                elif "List" in kind_data:
+                    list_data = kind_data["List"]
+                    return IRList([
+                        self._process_expression(element) 
+                        for element in list_data
+                    ])
+                elif "BinaryOp" in kind_data:
+                    binary_data = kind_data["BinaryOp"]
+                    # Create proper span information
+                    span = SpanData(0, 0)  # Default span
+                    if "span" in expr:
+                        span = SpanData(
+                            line=expr["span"].get("line", 0),
+                            column=expr["span"].get("column", 0)
+                        )
+                    return IRBinaryOp(
+                        op=binary_data["op"],
+                        left=self._process_expression(binary_data["left"]),
+                        right=self._process_expression(binary_data["right"]),
+                        span=span
+                    )
+        elif isinstance(expr, IRExpression):
+            return expr
+        return IRLiteral(None)  # Default fallback
         
     def _add_account_validations(self, instruction: IRInstruction, instruction_def: InstructionDefinition):
         """Add necessary account validation statements"""
@@ -173,19 +235,37 @@ class IRGenerator:
         
         # Process existing assert/require statements to identify signer checks
         for stmt in instruction.body:
-            if stmt.kind == "require":
-                if isinstance(stmt.data.get("condition", {}), dict):
-                    condition = stmt.data["condition"]
-                    if (condition.get("kind") == "binary_op" and
-                        condition["data"].get("op") == "==" and
-                        "authority" in str(condition["data"].get("left", {})) and
-                        "signer" in str(condition["data"].get("right", {}))):
-                        # This is a signer validation check - preserve the original message
-                        validations.append(stmt)
+            if stmt.kind == "Require":
+                require_data = stmt.data["data"]
+                condition = (require_data.condition 
+                           if isinstance(require_data, IRRequireData)
+                           else require_data.get("condition", {}))
+                
+                # Handle both IRExpression and dict conditions
+                if isinstance(condition, IRExpression):
+                    is_signer_check = (
+                        condition.kind == "BinaryOp" and
+                        condition.data["op"] == "==" and
+                        "authority" in str(condition.data["left"]) and
+                        "signer" in str(condition.data["right"])
+                    )
+                else:
+                    is_signer_check = (
+                        condition.get("kind") == "BinaryOp" and
+                        condition.get("data", {}).get("op") == "==" and
+                        "authority" in str(condition.get("data", {}).get("left", {})) and
+                        "signer" in str(condition.get("data", {}).get("right", {}))
+                    )
+                
+                if is_signer_check:
+                    validations.append(stmt)
         
         # Add any additional signer validations from account definitions
         for account in instruction_def.accounts:
-            if account.is_signer and not any("signer" in str(v.data.get("message")) for v in validations):
+            if account.is_signer and not any("signer" in str(v.data["data"].message) 
+                                           if isinstance(v.data["data"], IRRequireData)
+                                           else "signer" in str(v.data.get("data", {}).get("message"))
+                                           for v in validations):
                 validations.append(
                     IRRequire(
                         IRRequireData(

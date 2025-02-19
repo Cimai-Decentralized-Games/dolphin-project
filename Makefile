@@ -1,7 +1,7 @@
-.PHONY: all clean install test lint format build publish setup-dev test-integration docs
+.PHONY: all clean install test lint format build publish setup-dev test-integration docs verify
 
 # Default target
-all: clean install test lint
+all: verify build test
 
 # Clean build artifacts
 clean:
@@ -46,12 +46,10 @@ format:
 
 # Build package
 build: clean
+	# Build Rust library
+	maturin build --release
 	# Build Python package
 	python -m build
-	# Build Rust library
-	cargo build --release
-	# Copy Rust binary to Python package
-	cp target/release/libdolphin.* python/dolphin/
 
 # Build documentation
 docs:
@@ -65,18 +63,20 @@ serve-docs:
 init-dev: clean
 	# Install Python dependencies
 	python -m pip install --upgrade pip
-	pip install -e ".[dev]"
+	pip install -e ".[dev,docs]"
 	# Install Rust toolchain if needed
 	command -v rustc >/dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 	# Install Solana tools if needed
 	command -v solana >/dev/null 2>&1 || sh -c "$(curl -sSfL https://release.solana.com/v1.17.0/install)"
 	# Install Anchor if needed
 	command -v anchor >/dev/null 2>&1 || cargo install --git https://github.com/coral-xyz/anchor avm --locked
+	avm install latest
+	avm use latest
 	# Install pre-commit hooks
 	pre-commit install
 
 # Publish package
-publish: clean build
+publish: clean verify build
 	twine check dist/*
 	twine upload dist/*
 
@@ -89,36 +89,15 @@ watch-test:
 
 # Rust-specific targets
 build-rust:
-	cargo build --release
+	maturin build --release
 
 test-rust:
 	cargo test --all-features
 
-# Generate new program
-new-program:
-	@read -p "Enter program name: " name; \
-	read -p "Enter program ID: " id; \
-	dolphin init $$name $$id
-
-# Build program
-build-program:
-	dolphin build
-
-# Deploy program
-deploy-program:
-	@read -p "Enter network (devnet/mainnet-beta): " network; \
-	dolphin deploy --network $$network
-
-# Run program tests
-test-program:
-	dolphin test
-
-# Validate program
-validate: lint test
-	dolphin validate
-
-# CI/CD targets
-ci: lint test test-integration
+# Verify project setup
+verify: lint test
+	python -m build
+	twine check dist/*
 
 # Development utilities
 setup-solana:
@@ -130,10 +109,17 @@ setup-anchor:
 	avm install latest
 	avm use latest
 
+# Docker targets
+docker-build:
+	docker build -t dolphin-dev .
+
+docker-test:
+	docker run --rm dolphin-dev make test
+
 # Help target
 help:
 	@echo "Available targets:"
-	@echo "  all              : Clean, install, test, and lint"
+	@echo "  all              : Clean, verify, build and test"
 	@echo "  clean            : Remove build artifacts"
 	@echo "  install          : Install package in development mode"
 	@echo "  test             : Run unit tests"
@@ -145,10 +131,20 @@ help:
 	@echo "  serve-docs       : Serve documentation locally"
 	@echo "  init-dev         : Initialize development environment"
 	@echo "  publish          : Publish package"
-	@echo "  new-program      : Generate new Dolphin program"
-	@echo "  build-program    : Build Dolphin program"
-	@echo "  deploy-program   : Deploy Dolphin program"
-	@echo "  test-program     : Test Dolphin program"
-	@echo "  validate         : Validate program"
+	@echo "  verify           : Verify project setup"
 	@echo "  setup-solana     : Setup Solana tools"
 	@echo "  setup-anchor     : Setup Anchor framework"
+	@echo "  docker-build     : Build Docker development image"
+	@echo "  docker-test      : Run tests in Docker"
+
+# CI/CD targets
+ci: verify test test-integration
+
+# Development workflow targets
+dev-setup: init-dev setup-solana setup-anchor
+
+# Build and test in one command
+build-test: build test test-integration
+
+# Quick development cycle
+quick-dev: format lint test
