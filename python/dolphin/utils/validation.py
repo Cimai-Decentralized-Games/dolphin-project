@@ -15,7 +15,7 @@ def validate_address(address: str) -> bool:
 
 def validate_program_id(program_id: str) -> bool:
     """
-    Validate a Solana program ID using the Rust implementation.
+    Validate a Solana program ID.
     
     Args:
         program_id: The program ID to validate
@@ -23,7 +23,14 @@ def validate_program_id(program_id: str) -> bool:
     Returns:
         bool: True if program ID is valid, False otherwise
     """
-    return validation.validate_program_id(program_id)
+    # Basic validation for now since we don't have Rust validation yet
+    # Check length (base58 encoded program IDs are typically 32-44 chars)
+    if not (32 <= len(program_id) <= 44):
+        return False
+        
+    # Check characters (base58 alphabet)
+    base58_chars = set("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+    return all(c in base58_chars for c in program_id)
 
 def validate_token_mint(mint_address: str) -> bool:
     """

@@ -180,6 +180,39 @@ make format
 make docs
 ```
 
+## ▶️ Architecture Overview
+
+### Compilation Pipeline
+```mermaid
+sequenceDiagram
+    participant Dev as Developer
+    participant Py as Python Frontend
+    participant IR as Intermediate Representation
+    participant Rust as Rust Backend
+    participant BPF as Solana BPF
+    
+    Dev->>Py: Writes Python code
+    Py->>IR: Parse to IR
+    IR->>Rust: Generate Rust code
+    Rust->>BPF: Compile to BPF
+    BPF-->>Dev: Deployable program
+```
+
+### Key Components
+| Component          | Language | Purpose                          | Key Files                     |
+|---------------------|----------|----------------------------------|-------------------------------|
+| Parser & IR Gen     | Python   | Convert Python to IR             | `parser.py`, `ir_gen.py`      |
+| IR Definitions      | Both     | Cross-language data contract     | `ir.py` (Py), `ir.rs` (Rust)  |
+| Code Generator      | Rust     | Convert IR to Solana code        | `codegen.rs`                  |
+| Compiler Driver     | Rust     | Build pipeline management         | `mod.rs`, `generator/`        |
+
+## 📚 Documentation
+- [Architecture Deep Dive](docs/architecture.md) - Technical design and components
+- [Getting Started Guide](docs/getting_started.md)
+- [API Reference](docs/api_reference.md)
+- [Example Programs](examples/README.md)
+
+
 ## 🤝 Contributing
 
 We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md).

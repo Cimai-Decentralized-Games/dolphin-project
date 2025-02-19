@@ -146,7 +146,6 @@ class SolanaParser:
 
         self.current_program.accounts.append(account)
 
-
     def _parse_instruction(self, node: py_ast.FunctionDef) -> None:
         """Parse instruction definition"""
         if not self.current_program:
@@ -177,9 +176,35 @@ class SolanaParser:
             if parsed_stmt:
                 instruction.body.append(parsed_stmt)
 
-        # Add signer validation if needed
+        # Track accounts that already have signer validation
+        validated_accounts = set()
+
+        # Add signer validation for authority fields
+        if self.current_program and self.current_program.accounts:
+            for account in self.current_program.accounts:
+                account_name = account.name.lower()
+                # Check if account has an authority field and is used in this instruction
+                has_authority = any(field.name == "authority" for field in account.fields)
+                is_used = any(stmt.kind == "Assignment" and account_name in stmt.data.get("target", "")
+                            for stmt in instruction.body)
+                
+                if has_authority and is_used and account_name not in validated_accounts:
+                    # Add authority validation
+                    require_data = IRRequireData(
+                        condition=IRBinaryOp(
+                            "==",
+                            IRVariable(f"{account_name}.authority.key()"),
+                            IRVariable("signer.key()")
+                        ),
+                        message=f"{account_name} must be signer",
+                        span=SpanData(0, 0)
+                    )
+                    instruction.body.insert(0, IRRequire(require_data))
+                    validated_accounts.add(account_name)
+
+        # Add signer validation for explicitly marked signer accounts
         for account in instruction.accounts:
-            if account.is_signer:
+            if account.is_signer and account.name not in validated_accounts:
                 require_data = IRRequireData(
                     condition=IRBinaryOp(
                         "==",
@@ -190,6 +215,7 @@ class SolanaParser:
                     span=SpanData(0, 0)
                 )
                 instruction.body.insert(0, IRRequire(require_data))
+                validated_accounts.add(account.name)
 
         self.current_program.instructions.append(instruction)
 
@@ -218,33 +244,103 @@ class SolanaParser:
 
     def _parse_statement(self, node: py_ast.AST) -> Optional[IRStatement]:
         """Parse instruction body statements"""
-        if isinstance(node, py_ast.Assign):
-            target = node.targets[0]
-            if isinstance(target, py_ast.Name):
-                target_name = target.id
-            elif isinstance(target, py_ast.Attribute):
-                if isinstance(target.value, py_ast.Attribute):
-                    # Handle self.counter.authority
-                    if isinstance(target.value.value, py_ast.Name) and target.value.value.id == 'self':
-                        target_name = f"{target.value.attr}.{target.attr}"
-                    else:
-                        return None
-                elif isinstance(target.value, py_ast.Name):
-                    if target.value.id == 'self':
-                        target_name = target.attr
-                    else:
-                        target_name = f"{target.value.id}.{target.attr}"
-                else:
-                    return None
-            else:
+        if isinstance(node, py_ast.Assign) or isinstance(node, py_ast.AugAssign):
+            # Handle both regular assignment and augmented assignment (+=)
+            assignment_data = {}
+            
+            if isinstance(node, py_ast.Assign):
+                target = node.targets[0]
+                value = node.value
+                assignment_data["operator"] = "="  # Explicit operator for regular assignment
+            else:  # AugAssign
+                target = node.target
+                value = node.value
+                op = node.op
+                # Map Python AST operator to assignment operator
+                if isinstance(op, py_ast.Add):
+                    assignment_data["operator"] = "+="
+                elif isinstance(op, py_ast.Sub):
+                    assignment_data["operator"] = "-="
+                elif isinstance(op, py_ast.Mult):
+                    assignment_data["operator"] = "*="
+                elif isinstance(op, py_ast.Div):
+                    assignment_data["operator"] = "/="
+
+            # Parse target
+            target_name = self._parse_target(target)
+            if target_name is None:
                 return None
 
-            return IRStatement(
-                kind="Assignment",  # PascalCase
-                data={
-                    "target": target_name,
-                    "value": self._parse_expression(node.value)
+            assignment_data["target"] = target_name
+
+            # Handle value parsing
+            if isinstance(value, (py_ast.Constant, py_ast.Num)):
+                # Handle numeric literals
+                numeric_value = value.value if isinstance(value, py_ast.Constant) else value.n
+                assignment_data["value"] = {
+                    "kind": {
+                        "Literal": {
+                            "Integer": numeric_value
+                        }
+                    },
+                    "span": {
+                        "start": 0,
+                        "end": 0,
+                        "line": 0,
+                        "column": 0
+                    }
                 }
+            elif isinstance(value, py_ast.Name):
+                # Handle variable references
+                assignment_data["value"] = {
+                    "kind": {
+                        "Variable": value.id
+                    },
+                    "span": {
+                        "start": 0,
+                        "end": 0,
+                        "line": 0,
+                        "column": 0
+                    }
+                }
+            else:
+                # Handle complex expressions
+                assignment_data["value"] = self._parse_expression(value)
+
+            # Ensure operator is explicitly set for augmented assignments
+            if isinstance(node, py_ast.AugAssign):
+                if isinstance(node.op, py_ast.Add):
+                    assignment_data["operator"] = "+="
+                elif isinstance(node.op, py_ast.Sub):
+                    assignment_data["operator"] = "-="
+                elif isinstance(node.op, py_ast.Mult):
+                    assignment_data["operator"] = "*="
+                elif isinstance(node.op, py_ast.Div):
+                    assignment_data["operator"] = "/="
+            else:
+                assignment_data["operator"] = "="  # Explicit operator for regular assignment
+
+            # Special case: Ensure += 1 increments are explicitly marked
+            if assignment_data["operator"] == "+=" and isinstance(assignment_data["value"], IRLiteral):
+                if assignment_data["value"].data.get("value") == 1:
+                    # Convert IRLiteral to the expected dict format
+                    assignment_data["value"] = {
+                        "kind": {
+                            "Literal": {
+                                "Integer": 1
+                            }
+                        },
+                        "span": {
+                            "start": 0,
+                            "end": 0,
+                            "line": 0,
+                            "column": 0
+                        }
+                    }
+
+            return IRStatement(
+                kind="Assignment",
+                data=assignment_data
             )
         elif isinstance(node, py_ast.Assert):
             # Parse the assertion message
@@ -285,7 +381,53 @@ class SolanaParser:
                 # For other assertions, use the parsed expression directly
                 condition = self._parse_expression(node.test)
             
-            # Create require data with the appropriate condition
+            # Create require data with the appropriate condition and message
+            if (isinstance(node.test, py_ast.Compare) and 
+                len(node.test.ops) == 1 and 
+                isinstance(node.test.ops[0], py_ast.Eq)):
+                # Check for authority validation pattern
+                left = node.test.left
+                right = node.test.comparators[0]
+                
+                # Extract variable names
+                left_name = ""
+                right_name = ""
+                
+                if isinstance(left, py_ast.Attribute):
+                    if isinstance(left.value, py_ast.Attribute):
+                        left_name = f"{left.value.attr}.{left.attr}"
+                    elif isinstance(left.value, py_ast.Name):
+                        if left.value.id == 'self':
+                            left_name = left.attr
+                        else:
+                            left_name = f"{left.value.id}.{left.attr}"
+                
+                if isinstance(right, py_ast.Attribute):
+                    if isinstance(right.value, py_ast.Name):
+                        if right.value.id == 'self':
+                            right_name = right.attr
+                        else:
+                            right_name = f"{right.value.id}.{right.attr}"
+                
+                # Check for authority validation pattern
+                account_name = None
+                if "authority" in left_name:
+                    parts = left_name.split(".")
+                    if len(parts) >= 2:
+                        account_name = parts[0]
+                elif "authority" in right_name:
+                    parts = right_name.split(".")
+                    if len(parts) >= 2:
+                        account_name = parts[0]
+
+                if account_name and ("signer" in right_name or "signer" in left_name):
+                    # This is an authority validation
+                    message = f"{account_name} must be signer"
+                else:
+                    message = message or "assertion failed"
+            else:
+                message = message or "assertion failed"
+            
             require_data = {
                 "condition": condition,
                 "message": message,
@@ -308,7 +450,7 @@ class SolanaParser:
                 return IRRequire(require_data)
             elif isinstance(node.value.func, py_ast.Attribute):
                 return IRStatement(
-                    kind="MethodCall",  # PascalCase
+                    kind="MethodCall",
                     data={
                         "target": self._parse_expression(node.value.func.value),
                         "method": node.value.func.attr,
@@ -323,8 +465,19 @@ class SolanaParser:
             return IRLiteral(node.value)
         elif isinstance(node, py_ast.Name):
             if node.id == 'signer':
-                return IRVariable('signer')
+                return IRVariable('signer.key()')
             return IRVariable(node.id)
+        elif isinstance(node, py_ast.Call):
+            # Handle method calls like key()
+            if isinstance(node.func, py_ast.Attribute):
+                base = self._parse_expression(node.func.value)
+                if isinstance(base, IRVariable):
+                    base_name = base.data.get("name", "")
+                    if node.func.attr == "key":
+                        # Handle key() method call
+                        return IRVariable(f"{base_name}.key()")
+                    return IRVariable(f"{base_name}.{node.func.attr}()")
+            return IRVariable("unknown")
         elif isinstance(node, py_ast.Attribute):
             if isinstance(node.value, py_ast.Name):
                 base_name = node.value.id
@@ -336,8 +489,11 @@ class SolanaParser:
                     return IRVariable(f"signer.{node.attr}")
                 return IRVariable(f"{base_name}.{node.attr}")
             elif isinstance(node.value, py_ast.Attribute):
-                if isinstance(node.value.value, py_ast.Name) and node.value.value.id == 'self':
-                    return IRVariable(f"{node.value.attr}.{node.attr}")
+                if isinstance(node.value.value, py_ast.Name):
+                    if node.value.value.id == 'self':
+                        # Handle nested attributes
+                        return IRVariable(f"{node.value.attr}.{node.attr}")
+                    return IRVariable(f"{node.value.value.id}.{node.value.attr}.{node.attr}")
         elif isinstance(node, py_ast.Compare):
             # Ensure single comparison
             if len(node.ops) != 1 or len(node.comparators) != 1:
@@ -346,13 +502,30 @@ class SolanaParser:
             # Create span information
             span = SpanData(node.lineno, node.col_offset)
             
+            # Parse left and right expressions
+            left_expr = self._parse_expression(node.left)
+            right_expr = self._parse_expression(node.comparators[0])
+            
+            # Handle method calls in comparison
+            if isinstance(node.left, py_ast.Call) and isinstance(node.left.func, py_ast.Attribute):
+                if node.left.func.attr == "key":
+                    base = self._parse_expression(node.left.func.value)
+                    if isinstance(base, IRVariable):
+                        left_expr = IRVariable(f"{base.data['name']}.key()")
+            
+            if isinstance(node.comparators[0], py_ast.Call) and isinstance(node.comparators[0].func, py_ast.Attribute):
+                if node.comparators[0].func.attr == "key":
+                    base = self._parse_expression(node.comparators[0].func.value)
+                    if isinstance(base, IRVariable):
+                        right_expr = IRVariable(f"{base.data['name']}.key()")
+            
             # Create BinaryOp with proper structure
             return {
                 "kind": {
                     "BinaryOp": {
                         "op": self._get_compare_op_symbol(node.ops[0]),
-                        "left": self._parse_expression(node.left),
-                        "right": self._parse_expression(node.comparators[0])
+                        "left": left_expr,
+                        "right": right_expr
                     }
                 },
                 "span": asdict(span)
@@ -390,6 +563,23 @@ class SolanaParser:
         if op_type in op_map:
             return op_map[op_type]
         raise ValueError(f"Unsupported comparison operator: {op_type.__name__}")
+
+    def _parse_target(self, node: py_ast.AST) -> Optional[str]:
+        """Parse assignment target to get the full path"""
+        if isinstance(node, py_ast.Name):
+            return node.id
+        elif isinstance(node, py_ast.Attribute):
+            if isinstance(node.value, py_ast.Attribute):
+                # Handle nested attributes (e.g., self.counter.authority)
+                if isinstance(node.value.value, py_ast.Name):
+                    if node.value.value.id == 'self':
+                        return f"{node.value.attr}.{node.attr}"
+                    return f"{node.value.value.id}.{node.value.attr}.{node.attr}"
+            elif isinstance(node.value, py_ast.Name):
+                if node.value.id == 'self':
+                    return node.attr
+                return f"{node.value.id}.{node.attr}"
+        return None
 
     def _get_type_name(self, annotation: py_ast.AST) -> str:
         """Convert Python type annotations to Solana type names"""

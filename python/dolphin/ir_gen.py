@@ -146,6 +146,40 @@ class IRGenerator:
             return self._process_assignment(stmt)
         elif stmt.kind == "MethodCall":
             return self._process_method_call(stmt)
+        elif stmt.kind == "Assert":
+            assert_data = stmt.data
+            test = assert_data.get("test", {})
+            
+            # Check if this is a signer validation
+            if isinstance(test, dict) and "kind" in test:
+                kind_data = test["kind"]
+                if isinstance(kind_data, dict) and "BinaryOp" in kind_data:
+                    binary_op = kind_data["BinaryOp"]
+                    if binary_op.get("op") == "==":
+                        left = binary_op.get("left", {}).get("kind", {}).get("Variable", "")
+                        right = binary_op.get("right", {}).get("kind", {}).get("Variable", "")
+                        
+                        # Check if this is a signer comparison
+                        if "signer" in str(right):
+                            parts = [p for p in left.split('.') if p not in {"self"}]
+                            if len(parts) >= 2 and parts[-1] == "authority":
+                                account_name = parts[0]
+                                return IRRequire(
+                                    IRRequireData(
+                                        condition=test,
+                                        message=f"{account_name} must be signer",
+                                        span=SpanData(0, 0)
+                                    )
+                                )
+            
+            # For non-signer asserts, preserve the test condition
+            return IRRequire(
+                IRRequireData(
+                    condition=test,
+                    message="assertion failed",
+                    span=SpanData(0, 0)
+                )
+            )
         return stmt
 
     def _process_assignment(self, stmt: IRStatement) -> IRStatement:
@@ -154,12 +188,13 @@ class IRGenerator:
             kind="Assignment",
             data={
                 "target": stmt.data.get("target", ""),
+                "operator": stmt.data.get("operator", "="),  # Preserve the operator
                 "value": self._process_expression(stmt.data.get("value", {}))
             }
         )
         
     def _process_require(self, stmt: IRStatement) -> IRStatement:
-        """Process require statements"""
+        """Process require statements and enhance signer validation messages"""
         require_data = stmt.data.get("data", {})
         # Extract span data safely
         span_data = require_data.get("span", {})
@@ -173,9 +208,30 @@ class IRGenerator:
         else:
             span = SpanData(0, 0)
 
+        condition = self._process_expression(require_data.get("condition", {}))
+        original_message = require_data.get("message", "assertion failed")
+        new_message = original_message
+
+        # Check for signer validation pattern
+        if isinstance(condition, IRBinaryOp) and condition.data["op"] == "==":
+            left = condition.data["left"]
+            right = condition.data["right"]
+            
+            # Check both sides of the equality comparison
+            for (l, r) in [(left, right), (right, left)]:
+                if (isinstance(l, IRVariable) and 
+                    isinstance(r, IRVariable) and 
+                    r.data.get("name") == "signer"):
+                    # Extract account name from variable path (e.g. "counter.authority" -> "counter")
+                    parts = l.data["name"].split('.')
+                    if len(parts) >= 2 and parts[-1] == "authority":
+                        account_name = parts[-2]  # Get second to last part
+                        new_message = f"{account_name} must be signer"
+                        break
+
         processed_data = IRRequireData(
-            condition=self._process_expression(require_data.get("condition", {})),
-            message=require_data.get("message", "assertion failed"),
+            condition=condition,
+            message=new_message,
             span=span
         )
         return IRRequire(processed_data)
@@ -192,16 +248,33 @@ class IRGenerator:
             args=processed_args
         )
         
-    def _process_expression(self, expr: Union[IRExpression, Dict]) -> IRExpression:
+    def _process_expression(self, expr: Union[IRExpression, Dict]) -> Union[IRExpression, Dict]:
         """Process expressions"""
         if isinstance(expr, dict):
+            # If this is already a properly formatted dict with kind and Literal, return it as is
+            if "kind" in expr and "Literal" in expr["kind"]:
+                return expr
+                
             # Handle nested kind structure which is the standard format
             kind_data = expr.get("kind", {})
             if isinstance(kind_data, dict):
                 # Handle Rust's Literal enum variants
                 if any(variant in kind_data for variant in ("Integer", "Float", "String", "Boolean")):
                     variant, value = next(iter(kind_data.items()))
-                    return IRLiteral(value)
+                    # Return in the expected dict format
+                    return {
+                        "kind": {
+                            "Literal": {
+                                "value": value
+                            }
+                        },
+                        "span": {
+                            "start": 0,
+                            "end": 0,
+                            "line": 0,
+                            "column": 0
+                        }
+                    }
                 elif "Variable" in kind_data:
                     return IRVariable(kind_data["Variable"])
                 elif "List" in kind_data:
@@ -219,53 +292,112 @@ class IRGenerator:
                             line=expr["span"].get("line", 0),
                             column=expr["span"].get("column", 0)
                         )
+                    
+                    # Process left and right expressions
+                    left = self._process_expression(binary_data.get("left", {}))
+                    right = self._process_expression(binary_data.get("right", {}))
+                    
+                    # Special handling for signer comparisons
+                    if (isinstance(right, IRVariable) and 
+                        "signer" in right.data.get("name", "") and 
+                        isinstance(left, IRVariable)):
+                        # Extract account name from left side
+                        parts = [p for p in left.data["name"].split('.') if p not in {"self"}]
+                        if len(parts) >= 2 and parts[-1] == "authority":
+                            account_name = parts[0]
+                            return IRBinaryOp(
+                                "==",
+                                IRVariable(f"{account_name}.authority.key()"),
+                                IRVariable("signer.key()"),
+                                span=span
+                            )
+                    
+                    # Default binary operation
                     return IRBinaryOp(
-                        op=binary_data["op"],
-                        left=self._process_expression(binary_data["left"]),
-                        right=self._process_expression(binary_data["right"]),
+                        op=binary_data.get("op", "=="),
+                        left=left,
+                        right=right,
                         span=span
                     )
         elif isinstance(expr, IRExpression):
             return expr
-        return IRLiteral(None)  # Default fallback
+            
+        # If we get here, return a properly formatted dict for None
+        return {
+            "kind": {
+                "Literal": {
+                    "value": None
+                }
+            },
+            "span": {
+                "start": 0,
+                "end": 0,
+                "line": 0,
+                "column": 0
+            }
+        }
         
     def _add_account_validations(self, instruction: IRInstruction, instruction_def: InstructionDefinition):
         """Add necessary account validation statements"""
         validations = []
-        
-        # Process existing assert/require statements to identify signer checks
+        validated_accounts = set()
+
+        # First check for accounts with authority fields
+        if self.program and self.program.accounts:
+            for account in self.program.accounts:
+                account_name = account.name.lower()
+                has_authority = any(field.name == "authority" for field in account.fields)
+                is_used = any(
+                    (stmt.kind == "Assignment" and account_name in stmt.data.get("target", "")) or
+                    (stmt.kind == "Assert" and account_name in str(stmt.data.get("test", "")))
+                    for stmt in instruction.body
+                )
+                
+                if has_authority and is_used and account_name not in validated_accounts:
+                    validations.append(
+                        IRRequire(
+                            IRRequireData(
+                                condition=IRBinaryOp(
+                                    "==",
+                                    IRVariable(f"{account_name}.authority.key()"),
+                                    IRVariable("signer.key()")
+                                ),
+                                message=f"{account_name} must be signer",
+                                span=SpanData(0, 0)
+                            )
+                        )
+                    )
+                    validated_accounts.add(account_name)
+
+        # Process existing require statements
         for stmt in instruction.body:
             if stmt.kind == "Require":
-                require_data = stmt.data["data"]
-                condition = (require_data.condition 
-                           if isinstance(require_data, IRRequireData)
-                           else require_data.get("condition", {}))
+                require_data = stmt.data.get("data", {})
+                condition = require_data.get("condition", {})
                 
-                # Handle both IRExpression and dict conditions
-                if isinstance(condition, IRExpression):
-                    is_signer_check = (
-                        condition.kind == "BinaryOp" and
-                        condition.data["op"] == "==" and
-                        "authority" in str(condition.data["left"]) and
-                        "signer" in str(condition.data["right"])
-                    )
-                else:
-                    is_signer_check = (
-                        condition.get("kind") == "BinaryOp" and
-                        condition.get("data", {}).get("op") == "==" and
-                        "authority" in str(condition.get("data", {}).get("left", {})) and
-                        "signer" in str(condition.get("data", {}).get("right", {}))
-                    )
-                
-                if is_signer_check:
-                    validations.append(stmt)
+                # Check for authority validation pattern
+                if isinstance(condition, IRBinaryOp) and condition.op == "==":
+                    left = condition.left
+                    right = condition.right
+                    
+                    # Check both sides for signer.key() pattern
+                    left_signer = isinstance(left, IRVariable) and "signer.key()" in left.data.get("name", "")
+                    right_signer = isinstance(right, IRVariable) and "signer.key()" in right.data.get("name", "")
+                    
+                    if left_signer or right_signer:
+                        # Extract account name from the non-signer side
+                        account_side = right if left_signer else left
+                        if isinstance(account_side, IRVariable):
+                            parts = account_side.data.get("name", "").split(".")
+                            if len(parts) >= 3 and parts[1] == "authority" and parts[2] == "key()":
+                                account_name = parts[0]
+                                if account_name and account_name not in validated_accounts:
+                                    validations.append(stmt)
+                                    validated_accounts.add(account_name)
         
-        # Add any additional signer validations from account definitions
+        # Add signer validations for explicitly marked signer accounts
         for account in instruction_def.accounts:
-            if account.is_signer and not any("signer" in str(v.data["data"].message) 
-                                           if isinstance(v.data["data"], IRRequireData)
-                                           else "signer" in str(v.data.get("data", {}).get("message"))
-                                           for v in validations):
+            if account.is_signer and account.name not in validated_accounts:
                 validations.append(
                     IRRequire(
                         IRRequireData(
@@ -274,13 +406,14 @@ class IRGenerator:
                                 IRVariable(f"{account.name}.key()"),
                                 IRVariable("signer.key()")
                             ),
-                            message="signer validation required",
+                            message=f"{account.name} must be signer",
                             span=SpanData(0, 0)
                         )
                     )
                 )
+                validated_accounts.add(account.name)
         
-        # Add validations at the beginning of the instruction body
+        # Add validations at the beginning of instruction body
         instruction.body = validations + [stmt for stmt in instruction.body if stmt not in validations]
         
     def _validate_and_normalize_type(self, type_name: str) -> str:

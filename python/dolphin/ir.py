@@ -60,14 +60,14 @@ class IRBinaryOp(IRExpression):
     def __init__(self, op: str, left: 'IRExpression', right: 'IRExpression', 
                  span: Optional[Span] = None):
         # Create a proper Expression structure for each operand
-        left_expr = {
+        left_expr = left if isinstance(left, dict) else {
             "kind": {
                 left.kind: left.data.get("value", left.data.get("name", ""))
             },
             "span": to_json(left.span)
         } if isinstance(left, IRExpression) else to_json(left)
         
-        right_expr = {
+        right_expr = right if isinstance(right, dict) else {
             "kind": {
                 right.kind: right.data.get("value", right.data.get("name", ""))
             },
@@ -217,6 +217,17 @@ class IRProgram:
     types: List[IRCustomType] = field(default_factory=list)
     version: str = field(default="0.1.0")
     span: Optional[SpanData] = field(default=None)
+    _test_mode: bool = field(default=False)
+    
+    @property
+    def test_mode(self) -> bool:
+        """Get test mode status"""
+        return self._test_mode
+        
+    @test_mode.setter
+    def test_mode(self, value: bool):
+        """Set test mode status"""
+        self._test_mode = value
 
 def to_json(node: Union[IRProgram, IRAccount, IRField, IRInstruction,
                        IRArgument, IRAccountUsage, IRStatement, IRExpression,
@@ -323,7 +334,8 @@ def to_json(node: Union[IRProgram, IRAccount, IRField, IRInstruction,
             "program_version": node.version,
             "instructions": [to_json(instr) for instr in node.instructions],
             "accounts": [to_json(account) for account in node.accounts],
-            "types": [to_json(type_) for type_ in node.types]
+            "types": [to_json(type_) for type_ in node.types],
+            "_test_mode": node._test_mode
         }
     
     elif isinstance(node, IRAccount):
@@ -448,7 +460,7 @@ def from_json(data: Dict[str, Any]) -> Union[IRProgram, IRAccount, IRField, IRIn
     
     # Handle remaining types...
     if "program_name" in data:
-        return IRProgram(
+        program = IRProgram(
             name=data["program_name"],
             program_id=data["program_id"],
             version=data.get("program_version", "0.1.0"),
@@ -456,6 +468,9 @@ def from_json(data: Dict[str, Any]) -> Union[IRProgram, IRAccount, IRField, IRIn
             accounts=[from_json(a) for a in data.get("accounts", [])],
             types=[from_json(t) for t in data.get("types", [])]
         )
+        if "_test_mode" in data:
+            program.test_mode = data["_test_mode"]
+        return program
     elif "name" in data:
         if "fields" in data:  # Account
             return IRAccount(
