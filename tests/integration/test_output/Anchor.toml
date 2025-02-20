@@ -1,0 +1,15 @@
+[features]
+seeds = false
+
+[programs.devnet]
+testprogram_program = "Test666666666666666666666666666666666666666"
+
+[workspace]
+members = []
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+cluster = "devnet"
+wallet = "~/.config/solana/id.json"

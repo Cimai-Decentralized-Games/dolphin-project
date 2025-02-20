@@ -45,6 +45,29 @@ pub fn validate_program_id(program_id: &str) -> bool {
     validate_pubkey(program_id)
 }
 
+#[pyfunction]
+pub fn derive_program_address(seeds: Vec<Vec<u8>>, program_id: &str) -> String {
+    use solana_program::pubkey::Pubkey;
+    use std::str::FromStr;
+    
+    let program_pubkey = Pubkey::from_str(program_id).unwrap_or_default();
+    let seed_slices: Vec<&[u8]> = seeds.iter().map(|v| v.as_slice()).collect();
+    Pubkey::create_program_address(seed_slices.as_slice(), &program_pubkey)
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[pyfunction]
+pub fn find_program_address(seeds: Vec<Vec<u8>>, program_id: &str) -> (String, u8) {
+    use solana_program::pubkey::Pubkey;
+    use std::str::FromStr;
+    
+    let program_pubkey = Pubkey::from_str(program_id).unwrap_or_default();
+    let seed_slices: Vec<&[u8]> = seeds.iter().map(|v| v.as_slice()).collect();
+    let (pda, bump) = Pubkey::find_program_address(seed_slices.as_slice(), &program_pubkey);
+    (pda.to_string(), bump)
+}
+
 pub fn validate_account_name(name: &str) -> bool {
     TYPE_NAME_RE.is_match(name)
 }
@@ -78,6 +101,7 @@ pub fn validate_solana_type(type_name: &str) -> bool {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[pyclass]
 pub enum ValidationError {
     #[error("Invalid public key format: {0}")]
     InvalidPubkey(String),
@@ -143,7 +167,11 @@ pub fn register(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(validate_identifier, m)?)?;
     m.add_function(wrap_pyfunction!(validate_type_name, m)?)?;
     m.add_function(wrap_pyfunction!(validate_program_id, m)?)?;
+    m.add_function(wrap_pyfunction!(derive_program_address, m)?)?;
+    m.add_function(wrap_pyfunction!(find_program_address, m)?)?;
     
-    // Add any validation error types or other module-level items here
+    // Register ValidationError enum
+    m.add_class::<ValidationError>()?;
+    
     Ok(())
 }

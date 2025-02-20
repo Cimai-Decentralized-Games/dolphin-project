@@ -2,7 +2,7 @@
 from typing import Optional, Any, Dict, List
 from dataclasses import dataclass
 from enum import Enum
-from ..utils.validation import validate_address
+from ..utils.validation import validate_address, ValidationError
 
 class SolanaType(Enum):
     """Mapping of Python types to Solana types."""
@@ -45,9 +45,9 @@ class SolanaAccount:
     def __post_init__(self):
         """Validate account attributes after initialization."""
         if not validate_address(self.address):
-            raise ValueError(f"Invalid account address: {self.address}")
+            raise ValidationError(f"Invalid account address: {self.address}")
         if not validate_address(self.owner):
-            raise ValueError(f"Invalid owner address: {self.owner}")
+            raise ValidationError(f"Invalid owner address: {self.owner}")
         if self.lamports < 0:
             raise ValueError("Lamports cannot be negative")
 
@@ -81,13 +81,13 @@ class TokenAccount(SolanaAccount):
         """Additional validation for token-specific fields."""
         super().__post_init__()
         if self.mint and not validate_address(self.mint):
-            raise ValueError(f"Invalid mint address: {self.mint}")
+            raise ValidationError(f"Invalid mint address: {self.mint}")
         if self.delegate and not validate_address(self.delegate):
-            raise ValueError(f"Invalid delegate address: {self.delegate}")
+            raise ValidationError(f"Invalid delegate address: {self.delegate}")
         if self.decimals < 0 or self.decimals > 9:
-            raise ValueError("Decimals must be between 0 and 9")
+            raise ValidationError("Decimals must be between 0 and 9")
         if self.token_amount < 0:
-            raise ValueError("Token amount cannot be negative")
+            raise ValidationError("Token amount cannot be negative")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert token account to dictionary representation."""
@@ -209,3 +209,9 @@ class InstructionDefinition:
             "accounts": [acc.to_ir() for acc in self.accounts],
             "body": self.body
         }
+
+@dataclass
+class GameState:
+    """Represents the state of a Casino of Life game."""
+game_id: str
+agent_id: str

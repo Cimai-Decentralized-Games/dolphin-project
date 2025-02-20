@@ -1,5 +1,4 @@
 pub mod generator;
-pub mod templates;
 pub mod validation;
 pub mod ir;
 pub mod codegen;

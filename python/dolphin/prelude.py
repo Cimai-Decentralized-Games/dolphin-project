@@ -154,10 +154,7 @@ class InvalidProgramError(DolphinError):
     code = 102
     message = "Invalid program ID"
 
-class ValidationError(DolphinError):
-    """Raised when validation fails"""
-    code = 103
-    message = "Validation failed"
+from .utils.validation import ValidationError
 
 # Utility functions
 def create_program_address(seeds: List[Union[bytes, str]], program_id: Pubkey) -> Pubkey:
@@ -166,8 +163,8 @@ def create_program_address(seeds: List[Union[bytes, str]], program_id: Pubkey) -
         s.encode('utf-8') if isinstance(s, str) else s
         for s in seeds
     ]
-    from . import dolphin  # Import here to avoid circular imports
-    address = dolphin.create_program_address(seed_bytes, str(program_id))
+    from .ir_gen import IRGenerator  # Import here to avoid circular imports
+    address = IRGenerator.generate_pda(seed_bytes, str(program_id))
     return Pubkey(address)
 
 def find_program_address(seeds: List[Union[bytes, str]], program_id: Pubkey) -> tuple[Pubkey, int]:
@@ -176,8 +173,8 @@ def find_program_address(seeds: List[Union[bytes, str]], program_id: Pubkey) -> 
         s.encode('utf-8') if isinstance(s, str) else s
         for s in seeds
     ]
-    from . import dolphin  # Import here to avoid circular imports
-    address, bump = dolphin.find_program_address(seed_bytes, str(program_id))
+    from .ir_gen import IRGenerator  # Import here to avoid circular imports
+    address, bump = IRGenerator.find_pda(seed_bytes, str(program_id))
     return Pubkey(address), bump
 
 # Common constants
@@ -190,8 +187,8 @@ METADATA_PROGRAM_ID = Pubkey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")
 
 # Version information
 __version__ = "0.1.0"
-__author__ = "Caballo Loko"
-__email__ = "caballoloko@cimai.biz"
+__author__ = "Your_name_here"
+__email__ = "Your_email_@awesome_email"
 
 # Example usage in docstring
 __doc__ += """
