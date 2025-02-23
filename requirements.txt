@@ -12,3 +12,7 @@ borsh-construct>=0.1.0
 PyYAML>=6.0.0
 cryptography>=40.0.0
 maturin>=1.0.0
+casino-of-life==0.1.0
+stable-retro==0.9.3
+gymnasium>=1.0.0
+torch>=2.6.0

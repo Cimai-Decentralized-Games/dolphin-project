@@ -31,6 +31,9 @@ avm use latest
 
 # Install Dolphin
 pip install dolphin-framework
+
+# Install Casino of Life for game development
+pip install casino-of-life
 ```
 
 ### Create Your First Program
@@ -143,12 +146,52 @@ Dolphin provides built-in support for game development:
 
 3. **Casino Integration**
    ```python
-   deploy_to_casino(
-       game=game,
-       agent=agent,
-       casino_program_id=CASINO_ID
+   from dolphin.prelude import *
+   from dolphin.dolphin_games.casino_bridge import CasinoBridge
+
+   # Initialize bridge
+   bridge = CasinoBridge(
+       program_id=Pubkey("Your-Program-ID"),
+       game_name="Airstriker-Genesis"
    )
+
+   try:
+       # Setup environment with scenario
+       bridge.initialize_env(
+           state_name="Level1",
+           scenario_path="path/to/scenario.json"
+       )
+
+       # Create and train agent
+       bridge.create_agent(policy='PPO')
+       results = bridge.train_agent(
+           timesteps=100000,
+           save_interval=10000,
+           checkpoint_dir="checkpoints"
+       )
+
+       # Handle game state
+       bridge.game_state.metadata.update({
+           'score': current_score,
+           'level': current_level
+       })
+
+       # Update training metrics
+       bridge.game_state.reward_data = {
+           'score': current_score,
+           'time_bonus': time_bonus
+       }
+   finally:
+       bridge.close()  # Always close when done
    ```
+
+   Key features:
+   - Environment management with proper cleanup
+   - State tracking through metadata and rewards
+   - Checkpoint handling and model persistence
+   - Integration with popular ROMs (e.g., Airstriker-Genesis)
+
+   For more details, see the [Casino Integration Guide](docs/getting_started.md#casino-integration).
 
 ## 🌟 Examples
 

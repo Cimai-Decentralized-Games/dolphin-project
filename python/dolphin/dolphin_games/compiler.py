@@ -14,7 +14,7 @@ from .retro_support import RetroGameWrapper, create_retro_game
 logger = logging.getLogger(__name__)
 
 # Supported game types
-GAME_TYPE_SOLANA = "solana"
+GAME_TYPE_SOLANA = "solana" 
 GAME_TYPE_RETRO = "retro"
 
 class GameProgram:

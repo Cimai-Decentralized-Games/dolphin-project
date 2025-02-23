@@ -6,8 +6,63 @@ from .types import (
     InstructionDefinition,
     AccountField
 )
+from ..utils.validation import (
+    validate_address,
+    validate_program_id,
+    validate_identifier,
+    validate_type_name,
+    validate_account_name,
+    validate_field_name,
+    validate_instruction_name,
+    validate_solana_type,
+    ValidationError
+)
 
 T = TypeVar('T')
+
+def validate(validation_type: str) -> Callable:
+    """
+    Decorator for validating Solana-related values.
+    
+    Args:
+        validation_type: Type of validation to perform
+            ('address', 'program_id', 'identifier', 'type_name',
+             'account_name', 'field_name', 'instruction_name', 'solana_type')
+    """
+    validation_funcs = {
+        'address': validate_address,
+        'program_id': validate_program_id,
+        'identifier': validate_identifier,
+        'type_name': validate_type_name,
+        'account_name': validate_account_name,
+        'field_name': validate_field_name,
+        'instruction_name': validate_instruction_name,
+        'solana_type': validate_solana_type
+    }
+    
+    if validation_type not in validation_funcs:
+        raise ValueError(f"Unknown validation type: {validation_type}")
+        
+    validate_func = validation_funcs[validation_type]
+    
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # Get the value to validate from first argument after self
+            if len(args) > 1:
+                value = args[1]
+            else:
+                # Try to get from kwargs
+                param_name = list(kwargs.keys())[0]
+                value = kwargs[param_name]
+                
+            if not validate_func(str(value)):
+                raise ValidationError(f"Invalid {validation_type}: {value}")
+                
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
 
 def program(program_id: str, name: Optional[str] = None, version: str = "0.1.0"):
     """

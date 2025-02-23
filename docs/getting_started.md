@@ -1,179 +1,6 @@
 # Getting Started with Dolphin
 
-## Overview
-
-Dolphin is a Python framework for developing Solana programs, providing a seamless experience for writing, testing, and deploying smart contracts. This guide will walk you through setting up your development environment and creating your first Dolphin program.
-
-## Prerequisites
-
-Before you begin, ensure you have the following installed:
-
-```bash
-# Install Rust and Cargo
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Install Solana CLI tools
-sh -c "$(curl -sSfL https://release.solana.com/v1.17.0/install)"
-
-# Install Anchor Framework
-cargo install --git https://github.com/coral-xyz/anchor avm --locked
-avm install latest
-avm use latest
-
-# Install Python 3.8 or higher
-# macOS
-brew install python@3.8
-
-# Ubuntu
-sudo apt-get install python3.8 python3.8-dev
-```
-
-## Installation
-
-Install Dolphin using pip:
-
-```bash
-pip install dolphin-framework
-```
-
-## Project Initialization
-
-Create a new Dolphin project:
-
-```bash
-# Initialize a new project
-dolphin init my_program HeLLo777777777777777777777777777777777777777
-
-# Structure created:
-my_program/
-├── Cargo.toml          # Rust dependencies
-├── Anchor.toml         # Anchor configuration
-├── src/
-│   └── lib.rs         # Generated Rust program
-├── program/
-│   └── lib.py         # Your Python program
-├── tests/
-│   └── test_program.py
-└── client/            # JavaScript client
-    ├── package.json
-    └── src/
-        └── index.ts
-```
-
-## Writing Your First Program
-
-Edit `program/lib.py`:
-
-```python
-from dolphin.prelude import *
-
-@program("HeLLo777777777777777777777777777777777777777")
-class HelloWorldProgram:
-    @account
-    class Counter:
-        authority: Pubkey
-        count: u64
-        
-    @instruction
-    def initialize(
-        self,
-        counter: Counter,
-        authority: Signer,
-        system_program: Program = SYSTEM_PROGRAM_ID
-    ):
-        counter.authority = authority.key
-        counter.count = 0
-        
-    @instruction
-    def increment(
-        self,
-        counter: Counter,
-        authority: Signer
-    ):
-        assert counter.authority == authority.key, "Invalid authority"
-        counter.count += 1
-```
-
-## Building and Testing
-
-```bash
-# Build your program
-dolphin build
-
-# Run tests
-dolphin test
-
-# Deploy to devnet
-dolphin deploy --network devnet
-```
-
-## Program Structure
-
-### Accounts
-
-Accounts store program state:
-
-```python
-@account
-class GameState:
-    authority: Pubkey
-    score: u64
-    player_name: str
-```
-
-### Instructions
-
-Instructions define program logic:
-
-```python
-@instruction
-def update_score(
-    self,
-    state: GameState,
-    authority: Signer,
-    new_score: u64
-):
-    assert state.authority == authority.key, "Invalid authority"
-    state.score = new_score
-```
-
-### Program Derived Addresses (PDAs)
-
-Create deterministic addresses:
-
-```python
-@account
-@pda(seeds=["player", "game"])
-class PlayerState:
-    player: Pubkey
-    game: Pubkey
-    score: u64
-```
-
-## Development Workflow
-
-1. **Write Program**: Create your program in Python using Dolphin decorators and types.
-
-2. **Build**: Dolphin converts your Python code to Rust:
-   ```bash
-   dolphin build
-   ```
-
-3. **Test**: Write and run tests:
-   ```python
-   from dolphin.testing import ProgramTest
-   
-   async def test_counter():
-       program = await ProgramTest.load("program/lib.py")
-       counter = await program.create_account("Counter")
-       await program.initialize(counter=counter)
-       assert counter.count == 0
-   ```
-
-4. **Deploy**: Deploy to Solana:
-   ```bash
-   dolphin deploy --network devnet
-   ```
+[Previous content up to Advanced Features section...]
 
 ## Advanced Features
 
@@ -216,6 +43,151 @@ dolphin build --upgradeable
 # Deploy upgrade
 dolphin upgrade --program-id <PROGRAM_ID> --buffer <BUFFER_ADDRESS>
 ```
+
+### Casino Integration
+
+The Casino integration allows you to create game environments and train agents using the casino-of-life package. Here's a complete guide to getting started:
+
+#### Installation
+
+First, install the required packages:
+```bash
+pip install dolphin-framework casino-of-life
+```
+
+#### Basic Usage
+
+1. Create your game program:
+```python
+from dolphin.prelude import *
+
+@program("Your-Program-ID")
+class MyGame:
+    @account
+    class GameState:
+        authority: Pubkey
+        player: Pubkey
+        score: u64
+        high_score: u64
+        last_play: i64
+        is_initialized: bool
+
+    @instruction
+    def initialize(self, state: GameState, authority: Signer):
+        state.authority = authority.key()
+        state.is_initialized = True
+```
+
+2. Setup the Casino bridge:
+```python
+from dolphin.dolphin_games.casino_bridge import CasinoBridge
+
+# Initialize bridge
+bridge = CasinoBridge(
+    program_id=Pubkey("Your-Program-ID"),
+    game_name="Airstriker-Genesis"
+)
+
+try:
+    # Setup environment
+    bridge.initialize_env(state_name="Level1")
+    
+    # Create and train agent
+    bridge.create_agent(policy='PPO')
+    results = bridge.train_agent(
+        timesteps=100000,
+        save_interval=10000,
+        checkpoint_dir="checkpoints"
+    )
+finally:
+    bridge.close()  # Always close when done
+```
+
+#### State Management
+
+Handle game state through metadata and rewards:
+
+```python
+# Update game state
+bridge.game_state.metadata.update({
+    'score': current_score,
+    'level': current_level
+})
+
+# Update training metrics
+bridge.game_state.reward_data = {
+    'score': current_score,
+    'time_bonus': time_bonus
+}
+
+# Get IR representation
+ir_state = bridge.game_state.to_ir_dict()
+```
+
+#### Environment Configuration
+
+Create a scenario configuration (scenario.json):
+```json
+{
+    "name": "Training Scenario",
+    "metadata": {
+        "difficulty": "normal",
+        "players": 1,
+        "mode": "training"
+    },
+    "game_files": {
+        "rom": "Airstriker-Genesis",
+        "state": "Level1",
+        "metadata": "path/to/metadata.json"
+    }
+}
+```
+
+Use the configuration:
+```python
+bridge.initialize_env(
+    state_name="Level1",
+    scenario_path="path/to/scenario.json"
+)
+```
+
+#### Best Practices
+
+1. Always use proper cleanup:
+```python
+try:
+    bridge = CasinoBridge(program_id)
+    bridge.initialize_env()
+    # Use environment...
+finally:
+    bridge.close()
+```
+
+2. Handle state updates correctly:
+```python
+# Game state goes in metadata
+bridge.game_state.metadata.update({
+    'score': score,
+    'level': level
+})
+
+# Training metrics go in reward_data
+bridge.game_state.reward_data = {
+    'score': score,
+    'bonus': bonus
+}
+```
+
+3. Use checkpoints for long training:
+```python
+bridge.train_agent(
+    timesteps=100000,
+    save_interval=10000,
+    checkpoint_dir="checkpoints"
+)
+```
+
+For more details on Casino integration, see the [API Reference](api_reference.md#casino-integration).
 
 ## Next Steps
 

@@ -53,5 +53,10 @@ python-dotenv>=1.0.0
 debugpy>=1.6.0
 icecream>=2.1.0
 
+# Casino Integration Testing
+stable-baselines3>=2.5.0
+gym-notices>=0.0.8
+pyglet>=1.5.31
+
 # Performance Testing
 locust>=2.15.0
